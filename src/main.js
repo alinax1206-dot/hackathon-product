@@ -13,7 +13,17 @@ import {
   aggregationLabels,
 } from "./mapping.js";
 import "./style.css";
-import { AudioEngine } from "./audioEngine.js";
+import { Playback } from "./playback.js";
+import { createGuidanceAdapter } from "./guidance.js";
+import {
+  SAMPLE_MATERIAL,
+  createMaterial,
+  validateMaterial,
+  readLibrary,
+  saveMaterial,
+  parseMaterialJSON,
+  MAX_JSON_BYTES,
+} from "./materials.js";
 import { STYLES } from "./arrangement.js";
 
 const sample =
@@ -26,7 +36,20 @@ const state = {
   y: "",
   data: null,
   selected: 0,
-  voice: false,
+  mode: null,
+  creatorStep: 1,
+  creatorData: null,
+  metadata: { title: "", description: "", learningGoal: "" },
+  published: null,
+  material: null,
+  library: [],
+  libraryError: "",
+  dirty: false,
+  learnerPreview: false,
+  previewReturn: 3,
+  letterKeys: true,
+  notice: "",
+  playbackState: "stopped",
   file: "",
   error: "",
   sheets: [],
@@ -41,19 +64,66 @@ const state = {
   musicStyle: "acoustic",
   playerStatus: "Ready to play.",
 };
-const steps = ["Welcome", "Upload data", "Map columns", "Explore"];
-let audio,
-  nodes = [],
-  timer;
-const musicEngine = new AudioEngine({ onStateChange: ({ status, rowIndex }) => {
-  state.playerStatus = status === "loading" ? "Loading instrument recordings…" : status === "playing" ? "Playing your data as music." : status === "paused" ? "Music paused." : "Ready to play.";
-  const live = document.querySelector("#player-status");
-  if (live) live.textContent = state.playerStatus;
-  if (rowIndex != null && state.data) {
-    state.selected = rowIndex;
+let importGeneration = 0;
+const playback = new Playback({
+  onPoint: (index) => {
+    state.selected = index;
     updateSelectedPoint();
+    emitGuidance("pointSelected");
+  },
+  onStatus: (message) => {
+    state.playerStatus = message;
+    state.playbackState =
+      message === "Reading exact value."
+        ? "speaking"
+        : message.includes("paused")
+          ? "paused"
+          : message.startsWith("Playing")
+            ? "playing"
+            : message.startsWith("Loading")
+              ? "loading"
+              : "stopped";
+    const live = document.querySelector("#player-status");
+    if (live) live.textContent = message;
+    updatePlaybackButtons();
+    emitGuidance("playbackChanged");
+  },
+  onError: (message) => {
+    state.playerStatus = message;
+    const live = document.querySelector("#player-status");
+    if (live) live.textContent = message;
+    emitGuidance("errorOccurred");
+  },
+});
+const guidance = createGuidanceAdapter({
+  cancelPlayback: () => playback.stop(),
+});
+function emitGuidance(event) {
+  guidance.emit(event, {
+    mode: state.mode,
+    materialId: state.material?.id ?? null,
+    revision: state.material?.revision ?? null,
+    selectedPointId: state.data
+      ? `point-${state.data.range.start + state.selected}`
+      : null,
+    playbackState: state.playbackState,
+  });
+}
+function updatePlaybackButtons() {
+  const dataButton = document.querySelector("#play"),
+    musicButton = document.querySelector("#play-music");
+  if (dataButton) dataButton.textContent = playback.dataLabel(state.data);
+  const pauseButton = document.querySelector("#pause-music");
+  if (pauseButton) {
+    pauseButton.textContent = playback.pauseLabel;
+    pauseButton.disabled = !playback.canPause;
   }
-} });
+  if (musicButton) {
+    musicButton.textContent = playback.musicLabel;
+    musicButton.disabled =
+      playback.kind === "music" && playback.engine.status === "loading";
+  }
+}
 function updateSelectedPoint() {
   const point = state.data?.data[state.selected];
   if (!point) return;
@@ -62,10 +132,17 @@ function updateSelectedPoint() {
     button.classList.toggle("selected", active);
     button.setAttribute("aria-pressed", String(active));
   });
-  const detail = document.querySelector(".point-detail");
-  if (detail) detail.innerHTML = `<span>SELECTED POINT ${state.selected + 1} / ${state.data.data.length}</span><strong>${escape(point.label)} <em>${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button>`;
-  const single = document.querySelector("#single");
-  if (single) single.onclick = () => { stopAll(); note(point.value); };
+  const count = document.querySelector("#selected-count"),
+    label = document.querySelector("#selected-label"),
+    value = document.querySelector("#selected-value");
+  if (count)
+    count.textContent = `SELECTED POINT ${state.selected + 1} / ${state.data.data.length}`;
+  if (label) label.textContent = point.label;
+  const selectionStatus = document.querySelector("#selection-status");
+  if (selectionStatus)
+    selectionStatus.textContent = `Point ${state.selected + 1} selected: ${point.label}.`;
+  if (value)
+    value.textContent = `${formatValue(point.value, state.data)} ${state.data.unit}`;
 }
 const escape = (value) =>
   String(value).replace(
@@ -75,57 +152,22 @@ const escape = (value) =>
         c
       ],
   );
-function speak(text) {
-  stopAudio();
-  speechSynthesis.cancel();
-  if (state.voice) {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    speechSynthesis.speak(utterance);
-  }
-}
-function stopAudio() {
-  clearTimeout(timer);
-  nodes.forEach((n) => {
-    try {
-      n.stop();
-    } catch {}
-  });
-  nodes = [];
-}
 function stopAll() {
-  stopAudio();
-  musicEngine.stopAudio();
-  speechSynthesis.cancel();
+  playback.stop();
+  guidance.cancel();
 }
-function note(value, start = 0) {
-  audio ??= new AudioContext();
-  audio.resume();
-  const values = state.data.data.map((d) => d.value),
-    min = Math.min(...values),
-    max = Math.max(...values);
-  const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
-  const pitch =
-    max === min
-      ? 0.5
-      : (value / scale - min / scale) / (max / scale - min / scale);
-  const osc = audio.createOscillator(),
-    gain = audio.createGain(),
-    at = audio.currentTime + start;
-  osc.type = "sine";
-  osc.frequency.value = 220 * 2 ** (pitch * 2);
-  gain.gain.setValueAtTime(0, at);
-  gain.gain.linearRampToValueAtTime(0.16, at + 0.03);
-  gain.gain.exponentialRampToValueAtTime(0.001, at + 0.6);
-  osc.connect(gain).connect(audio.destination);
-  osc.start(at);
-  osc.stop(at + 0.65);
-  nodes.push(osc);
-  osc.onended = () => {
-    osc.disconnect();
-    gain.disconnect();
-    nodes = nodes.filter((n) => n !== osc);
-  };
+function readPoint() {
+  const p = state.data.data[state.selected];
+  playback.speak(
+    `${p.label}, ${formatValue(p.value, state.data)} ${state.data.unit}.`,
+    true,
+  );
+}
+function selectPoint(index) {
+  stopAll();
+  state.selected = index;
+  updateSelectedPoint();
+  emitGuidance("pointSelected");
 }
 function summary() {
   const d = state.data.data;
@@ -133,23 +175,92 @@ function summary() {
     lo = d.reduce((a, b) => (a.value <= b.value ? a : b));
   return { hi, lo, count: d.length };
 }
+function focusTitle() {
+  document.querySelector("h1")?.focus();
+}
 function go(step) {
+  if (state.step === 3 && step !== 3) emitGuidance("contextExited");
   stopAll();
   state.step = step;
   state.error = "";
+  state.notice = "";
+  if (state.mode === "creator") state.creatorStep = step;
   render();
-  document.querySelector("h1").focus();
-  speak(
-    [
-      "Welcome to ChartAloud.",
-      "Upload a CSV or XLSX file, or try our sample.",
-      "Choose your category and value columns.",
-      `Explore your data. ${state.data ? rangeDescription(state.data) : ""} Use left and right arrows on the data point controls.`,
-    ][step],
+  focusTitle();
+}
+function home() {
+  importGeneration++;
+  stopAll();
+  emitGuidance("contextExited");
+  if (state.mode === "creator") {
+    state.creatorStep = state.learnerPreview ? state.previewReturn : state.step;
+    state.creatorData = state.data;
+  }
+  state.mode = null;
+  state.data = null;
+  state.material = null;
+  state.learnerPreview = false;
+  state.step = 0;
+  state.error = "";
+  state.notice = "";
+  render();
+  focusTitle();
+}
+function enterCreator() {
+  stopAll();
+  state.mode = "creator";
+  state.material = null;
+  state.data = state.creatorData;
+  state.learnerPreview = false;
+  go(state.creatorStep);
+  emitGuidance("modeEntered");
+}
+function refreshLibrary() {
+  try {
+    state.library = readLibrary(localStorage);
+    state.libraryError = "";
+  } catch (e) {
+    state.libraryError = e.message;
+  }
+}
+function enterUser() {
+  if (state.mode === "creator") {
+    state.creatorStep = state.learnerPreview ? state.previewReturn : state.step;
+    state.creatorData = state.data;
+  }
+  stopAll();
+  state.mode = "user";
+  state.data = null;
+  state.material = null;
+  state.learnerPreview = false;
+  refreshLibrary();
+  go(1);
+  emitGuidance("modeEntered");
+}
+function openMaterial(material) {
+  stopAll();
+  emitGuidance("contextExited");
+  state.material = validateMaterial(material);
+  state.data = structuredClone(state.material.dataset);
+  state.selected = 0;
+  go(3);
+  emitGuidance("materialOpened");
+}
+function exportMaterial(material) {
+  const checked = validateMaterial(material);
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(checked, null, 2)], { type: "application/json" }),
   );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${checked.id}-r${checked.revision}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function invalidate() {
   stopAll();
+  state.dirty = true;
+  state.creatorData = null;
   state.data = null;
   state.mapped = null;
   state.start = "";
@@ -178,6 +289,7 @@ function loadSheets(sheets, name) {
   invalidate();
   state.sheets = sheets;
   state.file = name;
+  state.metadata.title = name.replace(/\.(csv|xlsx)$/i, "");
   state.sheet = "";
   state.rows = [];
   state.fields = [];
@@ -204,6 +316,7 @@ function openExplorer(start, end) {
   stopAll();
   state.data = selectRange(state.mapped, start, end);
   state.selected = 0;
+  state.creatorData = state.data;
   go(3);
 }
 function mappingContent() {
@@ -231,8 +344,7 @@ function mappingContent() {
         ? `<div class="mapping">
     <label>What do you want to compare?<small>Choose a category or time column.</small><select id="x">${options(state.x)}</select></label>
     <label>What value do you want to hear?<small>${state.aggregation === "count" ? "Not needed for Count." : "Identifier and date columns are not recommended automatically. You can select them manually."}</small><select id="y" ${state.aggregation === "count" ? "disabled" : ""}>${options(state.y)}</select></label>
-    <label>Unit<input id="unit" type="text" value="${escape(state.aggregation === "count" ? "records" : state.unit)}" ${state.aggregation === "count" || state.noUnit ? "disabled" : ""}></label>
-    <label><input id="noUnit" type="checkbox" ${state.noUnit ? "checked" : ""} ${state.aggregation === "count" ? "disabled" : ""}> No unit</label>
+    <div class="unit-field"><div class="unit-heading"><label for="unit">Unit</label><label class="no-unit-option"><input id="noUnit" type="checkbox" ${state.noUnit ? "checked" : ""} ${state.aggregation === "count" ? "disabled" : ""}> No unit</label></div><input id="unit" type="text" value="${escape(state.aggregation === "count" ? "records" : state.unit)}" ${state.aggregation === "count" || state.noUnit ? "disabled" : ""}></div>
     <label>Decimal places<small>Display and speech only; calculations and sound keep full precision. Count uses whole numbers.</small><select id="decimalPlaces" ${state.aggregation === "count" ? "disabled" : ""}>${Array.from({ length: MAX_DECIMAL_PLACES + 1 }, (_, places) => `<option value="${places}" ${places === (state.aggregation === "count" ? 0 : state.decimalPlaces) ? "selected" : ""}>${places}</option>`).join("")}</select></label>
     <label>When a category has multiple records, how should they be handled?<select id="aggregation">${Object.entries(
       aggregationLabels,
@@ -256,57 +368,282 @@ function mappingContent() {
 }
 const logo = `<img class="brand-logo" src="/brand/figurewalk-logo-transparent.png" alt="" width="130" height="98">`;
 const mascot = `<img class="mascot" src="/brand/figurewalk-character-transparent.png" alt="" width="532" height="576">`;
+function metadataContent() {
+  return `<div class="panel material-metadata"><h2>Learning material details</h2><div class="mapping"><label>Title (required)<input id="material-title" data-metadata="title" required maxlength="10000" value="${escape(state.metadata.title)}"></label><label>Short description (optional)<input data-metadata="description" maxlength="10000" value="${escape(state.metadata.description)}"></label><label>Learning goal (optional)<input data-metadata="learningGoal" maxlength="10000" value="${escape(state.metadata.learningGoal)}"></label></div><p id="draft-status">${state.dirty ? "Unpublished changes. Draft kept in this tab while switching modes; reload closes the draft." : "This draft matches the last published revision."}</p></div>`;
+}
+function overviewText() {
+  const s = summary(),
+    d = state.data;
+  return `${d.yAxis} by ${d.xAxis}. Unit: ${d.unit || "No unit"}. ${s.count} selected data points. ${aggregationLabels[d.aggregation]}. ${rangeDescription(d)} Highest is ${s.hi.label}, ${formatValue(s.hi.value, d)} ${d.unit}. Lowest is ${s.lo.label}, ${formatValue(s.lo.value, d)} ${d.unit}.`;
+}
+function libraryContent() {
+  return `<section class="materials-screen"><h1 tabindex="-1">Learning materials</h1><p>Choose a prepared chart. No spreadsheet upload or mapping is needed.</p><p>Saved in this browser. Materials do not automatically appear on other devices. Export and import JSON to transfer them.</p>${state.libraryError ? `<div role="alert" class="error">${escape(state.libraryError)}</div><button id="retry-library">Retry local library</button>` : ""}${!state.library.length ? '<p class="notice">No saved materials yet. Open Sample or import a learning material JSON file to begin.</p>' : ""}<div class="material-list">${[...state.library, SAMPLE_MATERIAL].map((m, i) => `<article class="panel"><h2>${escape(m.title)}</h2><p>${escape(m.description)}</p><p>${m.id === SAMPLE_MATERIAL.id ? "Built-in Sample" : "Saved in this browser"} · Revision ${m.revision}</p><div class="actions"><button data-open-material="${i}" aria-label="Open ${escape(m.title)} revision ${m.revision}">Open material</button><button data-export-material="${i}" aria-label="Export ${escape(m.title)} revision ${m.revision}">Export JSON</button></div></article>`).join("")}</div><div class="panel"><label for="material-file">Import learning material JSON</label><input id="material-file" type="file" accept=".json,application/json"><p>Choose a JSON file exported by ChartAloud (up to 2 MB).</p></div></section>`;
+}
+function publishContent() {
+  return `<section class="publish-screen"><h1 tabindex="-1">Publish learning material</h1><div class="panel"><h2>${escape(state.metadata.title)}</h2><p>${escape(state.metadata.description)}</p>${state.metadata.learningGoal ? `<p>Learning goal: ${escape(state.metadata.learningGoal)}</p>` : ""}<p>${escape(overviewText())}</p><p>Saved in this browser. Export JSON after publishing to give the material to a learner on another device.</p><p>${state.dirty ? "Unpublished changes" : "No unpublished changes"}${state.published ? ` · Last saved revision ${state.published.revision}` : ""}</p><div class="actions"><button id="publish" class="button">Publish learning material</button><button id="export-draft">Export draft as material JSON</button>${state.published ? '<button id="export-published">Export published JSON</button>' : ""}</div></div><div class="actions"><button id="back">Back to preview</button><button id="preview-learner">Preview as learner</button><button id="switch-user">Open User Mode</button>${state.published && !state.dirty ? '<button id="new-material">Start another material</button>' : ""}</div></section>`;
+}
+function bindMaterials(on) {
+  const materials = [...state.library, SAMPLE_MATERIAL];
+  document
+    .querySelectorAll("[data-open-material]")
+    .forEach(
+      (el) =>
+        (el.onclick = () =>
+          openMaterial(materials[Number(el.dataset.openMaterial)])),
+    );
+  document
+    .querySelectorAll("[data-export-material]")
+    .forEach(
+      (el) =>
+        (el.onclick = () =>
+          exportMaterial(materials[Number(el.dataset.exportMaterial)])),
+    );
+  on("retry-library", () => {
+    refreshLibrary();
+    render();
+    focusTitle();
+  });
+  on("switch-user", enterUser);
+  on("new-material", () => {
+    stopAll();
+    state.published = null;
+    state.metadata = { title: "", description: "", learningGoal: "" };
+    state.rows = [];
+    state.fields = [];
+    state.sheets = [];
+    state.sheet = "";
+    state.file = "";
+    state.x = "";
+    state.y = "";
+    state.mapped = null;
+    state.data = null;
+    state.creatorData = null;
+    state.start = "";
+    state.end = "";
+    state.dirty = false;
+    state.selected = 0;
+    go(1);
+  });
+  on("export-current", () => exportMaterial(state.material));
+  on("export-published", () => exportMaterial(state.published));
+  on("export-draft", () => {
+    try {
+      exportMaterial(
+        createMaterial(
+          state.data,
+          state.metadata,
+          state.published,
+          state.library,
+        ),
+      );
+    } catch (e) {
+      state.error = e.message;
+      render();
+      focusTitle();
+    }
+  });
+  on("publish", () => {
+    stopAll();
+    try {
+      // Read before writing: never overwrite a corrupted or newer library silently.
+      const library = readLibrary(localStorage);
+      const material = createMaterial(
+        state.data,
+        state.metadata,
+        state.published,
+        library,
+      );
+      state.library = saveMaterial(localStorage, library, material);
+      state.published = material;
+      state.dirty = false;
+      state.error = "";
+      state.libraryError = "";
+      state.notice = `Published revision ${material.revision}. Saved in this browser.`;
+      render();
+      focusTitle();
+    } catch (e) {
+      state.error = e.message;
+      render();
+      focusTitle();
+      emitGuidance("errorOccurred");
+    }
+  });
+  const input = document.querySelector("#material-file");
+  if (input)
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      stopAll();
+      const generation = ++importGeneration;
+      try {
+        if (file.size > MAX_JSON_BYTES)
+          throw new Error(
+            "Material file is too large. Choose a JSON file under 2 MB.",
+          );
+        const material = parseMaterialJSON(await file.text());
+        if (generation !== importGeneration || state.mode !== "user") return;
+        let saveError = "";
+        try {
+          const library = readLibrary(localStorage);
+          state.library = saveMaterial(localStorage, library, material);
+          state.libraryError = "";
+        } catch (e) {
+          if (e.code === "MATERIAL_CONFLICT") throw e;
+          saveError = e.message;
+        }
+        openMaterial(material);
+        if (saveError) {
+          state.error = `${saveError} Opened for this session only. Keep the original JSON file and retry saving from the material list.`;
+          render();
+          focusTitle();
+        } else {
+          state.notice = "Imported and saved in this browser.";
+          render();
+          focusTitle();
+        }
+      } catch (e) {
+        if (generation !== importGeneration || state.mode !== "user") return;
+        state.error = e.message;
+        render();
+        document.querySelector("#material-file")?.focus();
+        emitGuidance("errorOccurred");
+      }
+    };
+}
+// A fresh copy only: future agents cannot mutate application state through this API.
+Object.defineProperty(window, "chartaloudContext", {
+  value: Object.freeze({
+    getCurrent: () =>
+      structuredClone({
+        mode: state.mode,
+        material: state.mode === "user" ? state.material : null,
+        selectedPoint:
+          state.step === 3 && state.data
+            ? {
+                id: `point-${state.data.range.start + state.selected}`,
+                ...state.data.data[state.selected],
+              }
+            : null,
+        statistics: state.step === 3 && state.data ? summary() : null,
+      }),
+  }),
+});
+
 function render() {
   document.querySelector("#app").innerHTML =
-    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home">${logo}<span class="brand-words"><strong>ChartAloud</strong><small>STUDIO</small></span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><button id="voice" aria-pressed="${state.voice}">◖ <span>Voice guidance ${state.voice ? "on" : "off"}</span></button></div></header><div class="layout"><aside><nav aria-label="Progress"><ol>${steps.map((s, i) => `<li ${i === state.step ? 'aria-current="step"' : ""}><span class="stepnum">${i < state.step ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span></li>`).join("")}</ol></nav><div class="mascot-wrap">${mascot}</div></aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${content()}<footer><span>ChartAloud Studio · Your data stays in this browser.</span></footer></main></div>`;
+    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home">${logo}<span class="brand-words"><strong>ChartAloud</strong><small>STUDIO</small></span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><span class="guidance-soon">Audio guidance · Coming soon</span></div></header><div class="layout ${!state.mode ? "home-layout" : ""}"><aside><nav aria-label="${state.mode === "creator" ? "Creator" : "User"} progress" ${!state.mode ? "hidden" : ""}><ol>${(state.mode === "creator" ? ["Import", "Map", "Preview", "Publish"] : state.mode === "user" ? ["Materials", "Overview", "Explore"] : []).map((s, i) => `<li ${i === (state.mode === "creator" ? state.step - 1 : state.step === 1 ? 0 : 2) ? 'aria-current="step"' : ""}><span class="stepnum">${i < (state.mode === "creator" ? state.step - 1 : state.step === 1 ? 0 : 2) ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span></li>`).join("")}</ol></nav><div class="mascot-wrap">${mascot}</div></aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${state.notice ? `<p role="status" class="notice">${escape(state.notice)}</p>` : ""}${content()}${state.mode ? `<div class="actions"><button id="back-home">Back to home</button></div>` : ""}<footer><span>ChartAloud Studio · Your data stays in this browser.</span></footer></main></div>`;
   document.querySelector("#home").onclick = (e) => {
     e.preventDefault();
-    go(0);
-  };
-  document.querySelector("#voice").onclick = () => {
-    state.voice = !state.voice;
-    render();
-    if (state.voice) speak("Voice guidance enabled.");
-    else speechSynthesis.cancel();
+    home();
   };
   document.querySelector("#contrast").onclick = () => {
     document.body.classList.toggle("contrast");
+    const focused = document.activeElement?.id;
     render();
+    document.getElementById(focused)?.focus();
   };
   bind();
 }
 function content() {
   if (state.step === 0)
-    return `<section class="hero"><div class="eyebrow">LISTEN. EXPLORE. UNDERSTAND.</div><h1 tabindex="-1">Hear the<br><em>bigger picture.</em></h1><p class="intro">Turn your data into sound. Explore patterns, discover differences, and find your own way through a chart.</p><div class="wave" aria-hidden="true">${[24, 40, 32, 62, 85, 53, 107, 137, 87, 60, 99, 153, 121, 76, 48, 84, 112, 69, 42, 58, 31, 46, 22].map((h, i) => `<i style="height:${h}px;--n:${i}"></i>`).join("")}</div><div class="cards"><button class="mode primary-card" id="start"><span class="card-icon">◉</span><span class="eyebrow">EXPLORE WITH SOUND</span><h2>Start your walk <span>↗</span></h2><p>Bring a dataset. We'll help you hear it.</p><span class="card-bottom">Upload your data <b>→</b></span></button><button class="mode" id="sample"><span class="card-icon">✳</span><span class="eyebrow">A LITTLE CURIOUS?</span><h2>Try a sample <span>↗</span></h2><p>No file needed. Explore rainfall by city.</p><span class="card-bottom">Take a quick tour <b>→</b></span></button></div><p class="privacy">↳ Your file is processed in this browser. No upload to a server.</p></section>`;
+    return `<section class="hero"><div class="eyebrow">LISTEN. EXPLORE. UNDERSTAND.</div><h1 tabindex="-1">Hear the<br><em>bigger picture.</em></h1><p class="intro">Prepare a chart for learning, or explore prepared materials with sound.</p><div class="wave" aria-hidden="true">${[24, 40, 32, 62, 85, 53, 107, 137, 87, 60, 99, 153, 121, 76, 48, 84, 112, 69, 42, 58, 31, 46, 22].map((h, i) => `<i style="height:${h}px;--n:${i}"></i>`).join("")}</div><div class="cards"><button class="mode primary-card" id="creator"><span class="card-icon" aria-hidden="true">▥</span><h2>Creator Mode</h2><p>Prepare charts for learning.</p></button><button class="mode" id="user"><span class="card-icon" aria-hidden="true">♫</span><h2>User Mode</h2><p>Explore prepared charts with sound.</p></button></div>${state.dirty ? '<p class="notice">You have unpublished changes. Your draft is kept while switching modes in this tab.</p>' : ""}<p class="privacy">Saved in this browser. Export a learning material JSON file to use it on another device.</p></section>`;
+  if (state.mode === "user" && state.step === 1) return libraryContent();
+  if (state.mode === "creator" && state.step === 4) return publishContent();
   if (state.step === 1)
     return `<section class="upload-screen"><h1 tabindex="-1">What shall we explore today?</h1><div class="upload-paper"><div class="paper-tab">01 · Bring your data</div><div class="upload-main"><div class="upload-action"><div class="upload-symbol" aria-hidden="true">↥</div><h2>Drop a CSV or Excel file</h2><p>Choose a spreadsheet with column headers. Files stay in your browser.</p><label class="button" for="file">Choose a file</label><input id="file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="sample" class="text-button">Or try a sample →</button></div></div><div class="sticky-note" aria-hidden="true">${logo}<strong>Let's find<br>the patterns.</strong></div><div class="upload-steps" aria-label="Steps"><span>↥ &nbsp; Upload</span><span aria-hidden="true">→</span><span>▥ &nbsp; Map</span><span aria-hidden="true">→</span><span>♫ &nbsp; Listen</span></div></div><div class="actions"><button id="back">← Back</button></div></section>`;
   if (state.step === 2) return mappingContent();
   const s = summary(),
     d = state.data.data,
     point = d[state.selected],
-    range = Math.max(...d.map((p) => Math.abs(p.value))) || 1;
-  return `<section class="studio-screen"><h1 tabindex="-1">${escape(state.data.title)}</h1><p class="intro">${escape(rangeDescription(state.data))} · ${escape(aggregationLabels[state.data.aggregation])} · ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</p><div class="studio-grid"><div class="chart-area"><div class="chart-header"><h2>Chart to music</h2><button id="overview">Read overview</button></div><div class="chart" role="group" aria-label="Data points. Use left and right arrows to move. Enter plays a note.">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}"><span class="bar-value">${formatValue(p.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(p.value) / range) * 245)}px;--bar-index:${i}"></span><span class="bar-label">${escape(p.label)}</span></button>`).join("")}</div><div class="music-player"><button class="button play-button" id="play" aria-label="Play all points">▶ <span>Listen to data</span></button><button class="button" id="play-music">♫ Play as music</button><button id="pause-music" type="button">Pause</button><button id="stop" type="button">Stop</button><label>Music style <select id="music-style">${Object.entries(STYLES).map(([key, value]) => `<option value="${key}" ${key === state.musicStyle ? "selected" : ""}>${escape(value.name)}</option>`).join("")}</select></label><p id="player-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p></div></div><div class="point-side"><div class="point-detail" aria-live="polite"><span>SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong>${escape(point.label)} <em>${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button></div><div class="stat-note stats"><strong>Pattern at a glance</strong><p>${escape(s.hi.label)} is highest at ${formatValue(s.hi.value, state.data)} ${escape(state.data.unit)}. ${escape(s.lo.label)} is lowest at ${formatValue(s.lo.value, state.data)} ${escape(state.data.unit)}.</p></div></div></div><p class="keyboard-hint">Use ← → to move between bars · Enter to hear a point · Escape to stop</p><div class="actions"><button id="back">← Edit mapping</button></div></section>`;
+    range = Math.max(...d.map((p) => Math.abs(p.value))) || 1,
+    lesson = state.mode === "user" ? state.material : state.metadata;
+  return `<section class="studio-screen"><h1 tabindex="-1">${escape(state.mode === "user" ? state.material.title : state.metadata.title || state.data.title)}</h1>${state.mode === "creator" && !state.learnerPreview ? metadataContent() : ""}${state.learnerPreview ? '<p class="notice">Preview as learner · Unpublished draft</p>' : ""}${state.mode === "user" || state.learnerPreview ? `<p>${escape(lesson.description)}</p>${lesson.learningGoal ? `<p>Learning goal: ${escape(lesson.learningGoal)}</p>` : ""}` : ""}<p class="intro">${escape(rangeDescription(state.data))} · ${escape(aggregationLabels[state.data.aggregation])} · ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</p><div class="overview-panel" id="overview-text"><h2>Overview</h2><p>${escape(overviewText())}</p></div><div class="studio-grid"><div class="chart-area"><div class="chart-header"><h2>Chart to music</h2><button id="overview">Show overview</button></div><div class="chart" id="explorer" tabindex="0" role="group" aria-label="Explore data points" aria-describedby="keyboard-instructions">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}" aria-describedby="point-button-help"><span class="bar-value">${formatValue(p.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(p.value) / range) * 245)}px;--bar-index:${i}"></span><span class="bar-label">${escape(p.label)}</span></button>`).join("")}</div><div class="music-player"><button class="button play-button" id="play">${playback.dataLabel(state.data)}</button><button class="button" id="play-music">${playback.musicLabel}</button><button id="pause-music" type="button" ${playback.canPause ? "" : "disabled"}>${playback.pauseLabel}</button><label>Music style <select id="music-style">${Object.entries(
+    STYLES,
+  )
+    .map(
+      ([key, value]) =>
+        `<option value="${key}" ${key === state.musicStyle ? "selected" : ""}>${escape(value.name)}</option>`,
+    )
+    .join(
+      "",
+    )}</select></label><p id="player-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p></div></div><div class="point-side"><div class="point-detail"><span id="selected-count">SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong><span id="selected-label">${escape(point.label)}</span> <em id="selected-value">${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button><button id="read-value">Read exact value</button><div class="actions"><button id="previous">Previous point</button><button id="next">Next point</button><button id="first">First point</button><button id="last">Last point</button></div></div><div class="stat-note stats"><strong>Pattern at a glance</strong><p>${escape(s.hi.label)} is highest at ${formatValue(s.hi.value, state.data)} ${escape(state.data.unit)}. ${escape(s.lo.label)} is lowest at ${formatValue(s.lo.value, state.data)} ${escape(state.data.unit)}.</p></div></div></div><p id="selection-status" class="sr-only" role="status"></p><p class="keyboard-hint" id="keyboard-instructions">Focus the exploration area: Left / Right select a point; Home / End select the first / last point; Enter reads its exact value; R plays its pitch; Space plays or pauses the sequence. Escape stops audio and value reading.</p><p class="keyboard-hint" id="point-button-help">Data point buttons select a point. Use the exploration area or the equivalent buttons to read a value or play a note.</p><label class="letter-option"><input id="letter-keys" type="checkbox" ${state.letterKeys ? "checked" : ""}> Enable R shortcut in the exploration area</label><div class="actions"><button id="focus-explore">Focus exploration area</button><button id="back">${state.mode === "user" ? "Back to materials" : state.learnerPreview ? "Back to preview" : "Edit mapping"}</button>${state.mode === "creator" && !state.learnerPreview ? '<button id="preview-learner">Preview as learner</button><button id="review-publish" class="button">Review and publish</button>' : ""}${state.mode === "user" ? '<button id="export-current">Export material JSON</button>' : ""}</div></section>`;
 }
 function bind() {
   const on = (id, fn) => {
     const e = document.getElementById(id);
     if (e) e.onclick = fn;
   };
-  on("start", () => go(1));
+  on("creator", enterCreator);
+  on("user", enterUser);
+  on("back-home", home);
+  bindMaterials(on);
+  on("preview-learner", () => {
+    stopAll();
+    state.previewReturn = state.step;
+    state.learnerPreview = true;
+    state.step = 3;
+    render();
+    focusTitle();
+  });
+  on("review-publish", () => {
+    if (!state.metadata.title.trim()) {
+      state.error = "Enter a title before publishing.";
+      render();
+      document.querySelector("#material-title")?.focus();
+    } else go(4);
+  });
+  for (const key of ["title", "description", "learningGoal"]) {
+    const el = document.querySelector(`[data-metadata="${key}"]`);
+    if (el)
+      el.oninput = () => {
+        stopAll();
+        state.metadata[key] = el.value;
+        if (key === "title")
+          document.querySelector("h1").textContent =
+            el.value || state.data.title;
+        state.dirty = true;
+        const draftStatus = document.querySelector("#draft-status");
+        if (draftStatus)
+          draftStatus.textContent =
+            "Unpublished changes. Draft kept in this tab while switching modes; reload closes the draft.";
+      };
+  }
   on("sample", () =>
     loadSheets(
       [{ name: "CSV", table: parseCSV(sample) }],
       "Rainfall by City.csv",
     ),
   );
-  on("back", () => go(state.step - 1));
-  on("editMapping", () => { invalidate(); render(); document.querySelector("h1")?.focus(); });
+  on("back", () => {
+    if (state.mode === "user") {
+      emitGuidance("contextExited");
+      state.material = null;
+      go(1);
+      state.data = null;
+    } else if (state.learnerPreview) {
+      stopAll();
+      state.learnerPreview = false;
+      state.step = state.previewReturn;
+      render();
+      focusTitle();
+    } else if (state.step === 1) home();
+    else go(state.step - 1);
+  });
+  on("editMapping", () => {
+    invalidate();
+    render();
+    document.querySelector("h1")?.focus();
+  });
   const handleSelectedFile = async (selectedFile) => {
     if (!selectedFile) return;
+    const generation = ++importGeneration;
     try {
       stopAll();
-      loadSheets(await parseFile(selectedFile), selectedFile.name);
+      const sheets = await parseFile(selectedFile);
+      if (generation !== importGeneration || state.mode !== "creator") return;
+      loadSheets(sheets, selectedFile.name);
     } catch (error) {
+      if (generation !== importGeneration || state.mode !== "creator") return;
       state.error = error.message;
       render();
     }
@@ -315,7 +652,10 @@ function bind() {
   if (file) file.onchange = () => handleSelectedFile(file.files[0]);
   const dropZone = document.querySelector(".upload-paper");
   if (dropZone) {
-    dropZone.ondragover = (event) => { event.preventDefault(); dropZone.classList.add("drag-over"); };
+    dropZone.ondragover = (event) => {
+      event.preventDefault();
+      dropZone.classList.add("drag-over");
+    };
     dropZone.ondragleave = () => dropZone.classList.remove("drag-over");
     dropZone.ondrop = (event) => {
       event.preventDefault();
@@ -401,57 +741,89 @@ function bind() {
       render();
     }
   });
-  on("stop", stopAll);
   on("play-music", () => {
-    stopAll();
-    musicEngine.playArrangement({ title: state.data.title, xAxis: state.data.xAxis, series: [{ key: state.data.yAxis }], data: state.data.data.map((point) => ({ label: point.label, values: { [state.data.yAxis]: point.value } })) }, { playback: "music", style: state.musicStyle }).catch((error) => { state.playerStatus = error.message; const status = document.querySelector("#player-status"); if (status) status.textContent = error.message; });
+    if (
+      playback.kind === "music" &&
+      ["playing", "paused"].includes(playback.engine.status)
+    )
+      playback.toggle(state.data);
+    else playback.music(state.data, state.musicStyle);
   });
+  on("play", () => playback.sequence(state.data));
   on("pause-music", () => {
-    if (musicEngine.status === "paused") musicEngine.resume().catch((error) => { state.playerStatus = error.message; });
-    else musicEngine.pause();
-    const button = document.querySelector("#pause-music");
-    if (button) button.textContent = musicEngine.status === "paused" ? "Continue" : "Pause";
+    if (playback.canPause) playback.toggle(state.data);
   });
-  const style = document.querySelector("#music-style");
-  if (style) style.onchange = () => { stopAll(); state.musicStyle = style.value; };
+  on("single", () => playback.point(state.selected, state.data));
+  on("read-value", readPoint);
+  on("previous", () => selectPoint(Math.max(0, state.selected - 1)));
+  on("next", () =>
+    selectPoint(Math.min(state.data.data.length - 1, state.selected + 1)),
+  );
+  on("first", () => selectPoint(0));
+  on("last", () => selectPoint(state.data.data.length - 1));
+  on("focus-explore", () => {
+    document.querySelector("#explorer").focus();
+    if (state.mode === "user") {
+      const items = document.querySelectorAll("nav li");
+      items.forEach((el) => el.removeAttribute("aria-current"));
+      items[2]?.setAttribute("aria-current", "step");
+    }
+  });
   on("overview", () => {
-    state.voice = true;
-    render();
-    const s = summary();
-    speak(
-      `${rangeDescription(state.data)} ${aggregationLabels[state.data.aggregation]}. ${s.count} data points. Highest is ${s.hi.label}, ${formatValue(s.hi.value, state.data)} ${state.data.unit}. Lowest is ${s.lo.label}, ${formatValue(s.lo.value, state.data)} ${state.data.unit}.`,
-    );
-  });
-  on("single", () => {
     stopAll();
-    note(state.data.data[state.selected].value);
+    const overview = document.querySelector("#overview-text");
+    overview.tabIndex = -1;
+    overview.focus();
+    if (state.mode === "user") {
+      const items = document.querySelectorAll("nav li");
+      items.forEach((el) => el.removeAttribute("aria-current"));
+      items[1]?.setAttribute("aria-current", "step");
+    }
+    emitGuidance("overviewRequested");
   });
-  on("play", () => {
-    stopAll();
-    let i = 0;
-    const next = () => {
-      state.selected = i;
-      render();
-      note(state.data.data[i].value);
-      i++;
-      if (i < state.data.data.length) timer = setTimeout(next, 800);
+  const letter = document.querySelector("#letter-keys");
+  if (letter)
+    letter.onchange = () => {
+      state.letterKeys = letter.checked;
     };
-    next();
-  });
-  document.querySelectorAll("[data-point]").forEach((el) => {
-    const select = (i) => {
+  const style = document.querySelector("#music-style");
+  if (style)
+    style.onchange = () => {
       stopAll();
-      state.selected = i;
-      render();
-      document.querySelector(`[data-point="${i}"]`).focus();
-      note(state.data.data[i].value);
+      state.musicStyle = style.value;
     };
-    el.onclick = () => select(Number(el.dataset.point));
-    el.onkeydown = (e) => {
-      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) {
-        e.preventDefault();
-        let i = Number(el.dataset.point);
-        i =
+  document.querySelectorAll("[data-point]").forEach((el) => {
+    el.onclick = () => selectPoint(Number(el.dataset.point));
+  });
+  const explorer = document.querySelector("#explorer");
+  if (explorer)
+    explorer.onkeydown = (e) => {
+      if (
+        e.target !== explorer ||
+        e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.shiftKey ||
+        e.repeat
+      )
+        return;
+      const keys = [
+        "ArrowLeft",
+        "ArrowRight",
+        "Home",
+        "End",
+        "Enter",
+        " ",
+        ...(state.letterKeys ? ["r", "R"] : []),
+      ];
+      if (!keys.includes(e.key)) return;
+      e.preventDefault();
+      if (e.key === "Enter") readPoint();
+      else if (e.key.toLowerCase() === "r")
+        playback.point(state.selected, state.data);
+      else if (e.key === " ") playback.toggle(state.data);
+      else
+        selectPoint(
           e.key === "Home"
             ? 0
             : e.key === "End"
@@ -460,15 +832,16 @@ function bind() {
                   0,
                   Math.min(
                     state.data.data.length - 1,
-                    i + (e.key === "ArrowRight" ? 1 : -1),
+                    state.selected + (e.key === "ArrowRight" ? 1 : -1),
                   ),
-                );
-        select(i);
-      }
+                ),
+        );
     };
-  });
 }
+
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") stopAll();
+  if (e.key === "Escape" && state.mode && !e.altKey && !e.ctrlKey && !e.metaKey)
+    stopAll();
 });
+refreshLibrary();
 render();

@@ -1,104 +1,174 @@
-# ChartAloud
+# ChartAloud Studio
 
-An accessible single-series data explorer: CSV/XLSX → mapping → explicit exploration range → overview and sound. All generated UI and speech are English; uploaded labels are preserved.
+A browser-only single-series CSV/XLSX chart learning tool. Creator Mode prepares
+and publishes learning materials; User Mode opens prepared charts without mapping
+or uploading spreadsheets. Generated UI, errors and exact-value speech are English;
+imported labels are preserved. The blue/peach stationery style and supplied brand
+artwork are retained.
 
 ## Run and verify
 
 Node.js 20.19+ or 22.12+ is required.
 
-For teammates, download this version with:
-
 ```sh
-git clone https://github.com/alinax1206-dot/hackathon-product.git
-cd hackathon-product
-git switch feat/figurewalk-audio-ui
 npm ci
-npm run dev
-```
-
-Open the local URL printed by Vite. If you already cloned the repository, run `git fetch origin` and `git switch feat/figurewalk-audio-ui` instead of cloning again.
-
-```sh
-npm install
 npm run dev
 npm test
 npm run build
-# Install Playwright Chromium once, or set FIGUREWALK_CHROME_PATH to a local Chrome executable.
+# Install once, or point FIGUREWALK_CHROME_PATH to an installed Chrome binary.
 npx playwright install chromium
 npm run test:browser
 ```
 
-Browser tests normally start Vite on port 5188. `FIGUREWALK_TEST_URL` can target an already running server. They instrument audio and speech to verify scheduling, cancellation and English language selection; they do not validate physical speaker output or speech quality.
+Open the local URL printed by Vite. Browser tests normally use port 5188.
+`FIGUREWALK_TEST_URL` can target an existing server. For installed macOS Chrome:
 
-## Walkthrough and mapping rules
+```sh
+FIGUREWALK_TEST_URL=http://127.0.0.1:5176 \
+FIGUREWALK_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+npm run test:browser
+```
 
-Choose **Try a sample**, select the unit (or **No unit**), then **Validate mapping and continue**. CSV and XLSX files are processed locally. For workbooks with several worksheets, explicitly select one. The original worksheet matrices remain in `state.sheets`; previews and mapped datasets are separate objects.
+## Creator and learner flows
 
-- Category or time and numeric columns must differ, except Count needs no numeric column.
-- **Decimal places** selects 0–10 digits (default 2) for Explorer values and speech. Count uses whole numbers. This rounds presentation only; raw values, aggregation, extrema selection, bar heights and sound retain full precision. Changing precision clears derived results and cancels sound/speech like other mapping changes.
-- Unit is required unless No unit is explicitly checked. Count always uses `records`.
-- Default is Do not aggregate. Duplicate categories block this mode and require an explicit Sum, Average or Count choice.
-- Aggregation follows first category appearance. Dates retain source order and are never grouped implicitly. Excel date cells are represented as ISO timestamps; CSV date labels remain literal strings.
-- Blank categories and blank, non-numeric or non-finite numeric cells block conversion, with source row numbers (header is row 1). Zero and negative numbers are valid. Empty records inside a CSV are validated, not silently dropped.
-- Numeric recommendations exclude identifier, version, code, postal and date/time fields. Every column remains available for manual selection. Recommendations are only a convenience, not semantic detection.
-- More than 100 mapped points require explicit inclusive start/end indices, selecting 1–100 continuous points. Nothing is truncated automatically. Statistics, chart, overview, point playback and sequence all consume the same selected dataset, visibly marked when partial.
-- Mapping and worksheet changes cancel audio/speech and clear derived results and range. Range edits cancel audio/speech and clear the previously selected dataset.
+Home provides real Creator Mode and User Mode buttons. There is no global Space
+shortcut and no automatic guidance or playback.
 
-Tab accesses all controls. Point controls support left/right, Home/End and Enter. Escape and Stop cancel sound and speech. Read overview speaks the selected range, aggregation, count, highest and lowest. Speech utterances explicitly use `en-US`.
+Creator: Import CSV/XLSX → Map → Preview → Publish learning material. Try a sample
+is available inside Import. Title is required; description and learning goal are
+optional. Preview and Preview as learner share the exact same Explorer used in
+User Mode. Review displays the actual metric, axes, unit, aggregation, point count,
+range, and calculated extrema. A partial selection is always marked partial data.
 
-## Modules and integration
+Publish validates and writes an independent immutable snapshot. Success is shown
+only after the write succeeds. Subsequent edits do not change earlier revisions;
+republishing retains the material ID and increments revision. The library retains
+all revisions, with explicit open buttons. After successful publication, Start
+another material begins a separate material with a new ID on publication.
 
-`src/import-data.js` exports:
+Mode switching and Back to home preserve the current Creator draft in this tab;
+unpublished changes are indicated. Drafts do not survive page reload or tab close.
+Published materials persist until browser storage is cleared. No account, backend,
+database, or cross-device service exists in this project.
 
-- `parseFile(file)` → Promise of `[{ name, table }]` (CSV or XLSX). File needs `name`, `text()` for CSV, and `arrayBuffer()` for XLSX.
-- `parseCSV(text)` → raw cell matrix.
-- `prepareTable(table)` → `{ fields, rows }`, without mutating the source matrix. Requires unique, non-empty headers.
+User: Materials → textual Overview → keyboard/sound Explorer. Users explicitly
+choose a material, even when only Sample is available. There is no automatic
+sequence or speech. Opening a material stops all previous playback and focuses its
+title. Overview includes axes, unit, selected count, highest/lowest values,
+aggregation and range. Sample and JSON import remain available in an empty library.
 
-`src/mapping.js` exports:
+## Storage and JSON handoff
 
-- `numericCell(value)` → `{ value }` or `{ error }`.
-- `recommendValue(fields, rows, category)` → column name or empty string.
-- `mapColumns(rows, { x, y, aggregation, unit, noUnit, title, sheet, decimalPlaces })` → complete validated dataset. Aggregation is `none` (default), `sum`, `mean` or `count`.
-- `selectRange(dataset, start, end)` → compatible dataset containing only the chosen points. Indices are inclusive and start at 1. Rejects invalid ranges or more than 100 points.
-- `rangeDescription(dataset)` → English exploration scope text.
+**Saved in this browser** means this browser profile and this origin, including its
+port. Materials are not automatically visible on other devices or another port.
+The local library uses `localStorage` under `chartaloud.materials.v1`; published
+snapshots contain at most 100 selected points, so no spreadsheet binaries need to
+be stored. Storage failure or corruption is reported without overwriting existing
+storage or discarding the Creator draft. Retry or export JSON to preserve work.
 
-Explorer/module output example:
+Export published JSON to transfer an actual saved revision. Export draft as
+material JSON produces a validated transferable snapshot without claiming it was
+published locally. User imports JSON and immediately opens the prepared dataset,
+without column mapping. If saving is blocked/full, a valid import can still open
+for the current session with an explicit error; keep the original JSON and retry
+from Materials. Invalid JSON, unsupported versions, inconsistent counts/ranges,
+invalid values, oversized files, and conflicting ID/revision content are rejected.
+Repeated identical imports are idempotent. There are no share links.
 
 ```json
 {
-  "title": "Rainfall by City",
-  "xAxis": "City",
-  "yAxis": "Rainfall",
-  "unit": "mm",
-  "data": [{ "label": "Seattle", "value": 95 }],
-  "aggregation": "sum",
-  "decimalPlaces": 2,
-  "importedRows": 120,
-  "totalPoints": 80,
-  "sheet": "Sheet1",
-  "range": { "start": 1, "end": 1, "total": 80, "partial": true }
+  "schemaVersion": 1,
+  "id": "stable-uuid",
+  "revision": 1,
+  "title": "Rainfall lesson",
+  "description": "Compare cities.",
+  "learningGoal": "Find the highest value.",
+  "createdAt": "2026-11-07T00:00:00.000Z",
+  "dataset": {
+    "title": "Rainfall by City",
+    "xAxis": "City",
+    "yAxis": "Rainfall",
+    "unit": "mm",
+    "data": [{ "label": "Seattle", "value": 95 }],
+    "aggregation": "none",
+    "decimalPlaces": 2,
+    "importedRows": 1,
+    "totalPoints": 1,
+    "sheet": "CSV",
+    "range": { "start": 1, "end": 1, "total": 1, "partial": false }
+  }
 }
 ```
 
-`title`, `xAxis`, `yAxis`, `unit`, and `data: [{label,value}]` remain compatible. `totalPoints` is the full mapped count before range selection. `range` exists on `selectRange()` results. `decimalPlaces` carries the display precision through range selection; `src/format-value.js` exports `formatValue(value, dataset)` for consistent English presentation. Count sets `yAxis: "Record count"` and `unit: "records"`; explicit No unit yields `unit: ""`.
+JSON imports accept one material, up to 2 MB. Schema version is currently 1.
+The validator reconstructs known fields rather than trusting arbitrary properties.
+Stable point IDs are `point-<original mapped index>` within the material revision.
 
-The UI and existing Web Audio/browser speech flow are in `src/main.js`; styling uses plain CSS. No backend, AI calls, database or multi-series support is added. Full VoiceOver/NVDA testing and physical audio listening are still needed before claiming accessibility compliance or audio quality.
+## Mapping and data semantics
 
-## Local integration (2026-11-07)
+- CSV/XLSX only, single-series bar charts. No image recognition or AI.
+- Multi-sheet workbooks require worksheet selection. Source tables remain separate
+  from previews and mapped data. No implicit date sorting or grouping.
+- Category and numeric columns must differ, except Count requires no numeric column.
+- Unit is required unless No unit is explicitly checked. Count uses `records`.
+- Duplicate categories require an explicit Sum, Average or Count selection.
+  Aggregation follows first category appearance.
+- Blank categories and invalid numeric cells report original source row numbers;
+  zero and negatives are valid. Empty interior CSV records are not silently dropped.
+- Numeric recommendations exclude identifiers, versions, codes, postal and date/time
+  fields, but every field remains manually selectable.
+- Decimal places (0–10, default 2) controls displayed and spoken values, not raw
+  data, aggregation, extrema or pitch. Count always uses whole numbers.
+- More than 100 mapped points require an explicit continuous inclusive range of
+  1–100 points. No silent truncation. Chart, overview, statistics and audio use
+  exactly that range. Partial data never claims to represent the full table.
+- Changing mapping or ranges stops all old audio and clears derived results.
 
-The `feat/figurewalk-audio-ui` branch starts from upstream main commit `42ad11d` and adds the existing `audio-work` recorded-instrument engine to the new single-series CSV/XLSX mapping flow. The original oscillator sonification remains available as **Listen to data**; **Play as music** uses local instrument samples and the selected music style. The Start/upload and Studio/chart-to-music views use responsive RdBu colors, the supplied three-bar note logo and its separate small note character. Instrument and ambience attribution is in `SAMPLE_CREDITS.md`. No file is sent to a backend.
+## Keyboard, speech and audio
 
-Run `npm ci`, then `npm run dev` and open the displayed local URL. Run `npm test`, `npm run build`, and `npm run test:browser` for verification. If Playwright Chromium is not installed, use `FIGUREWALK_CHROME_PATH` to point to a local Chrome executable.
+Tab reaches native controls. Use Focus exploration area to focus the chart container:
 
-## Excel dependency provenance
+- Left/Right select a point; Home/End select first/last.
+- Enter explicitly reads the current label, displayed numeric value and unit.
+- R plays the current pitch; a checkbox can disable this single-letter shortcut.
+- Space plays/pauses the sequence only when the exploration container itself has focus.
+- Escape stops application audio and value reading without navigation.
 
-`read-excel-file@9.3.14` was installed from the official npm registry. Its package metadata links to the author's [GitLab repository](https://gitlab.com/catamphetamine/read-excel-file); the [official documentation](https://github.com/catamphetamine/read-excel-file#readme) documents the universal API used here. Registry metadata checked on 2026-11-07 reports modification on 2026-10-29 and tarball `https://registry.npmjs.org/read-excel-file/-/read-excel-file-9.3.14.tgz`. `package-lock.json` records the resolved URL and integrity. The legacy npm `xlsx` package is not used.
+Every action has an equivalent button. Point buttons select points using native
+click/Enter/Space; shortcuts do not override controls, links, forms, contenteditable,
+modifier combinations or repeated keydown. No `role="application"` is used. Screen
+readers can use native buttons when they capture arrow keys. Progress updates change
+only the selected-point UI and short status, preserving focus.
 
-## Verification performed (2026-11-07)
+`src/playback.js` centrally owns oscillator notes, sequence pause/resume, recorded
+music and exact-value speech. Speech cancels music and vice versa. Cancellation
+clears timers and invalidates stale asynchronous callbacks. Exact-value speech uses
+`en-US` and an available English voice; unsupported/blocked APIs show English status
+messages. No speech is needed for exploration, playback or the textual overview.
 
-- `npm test`: 6 conversion tests passed, including the committed three-sheet XLSX fixture.
-- Chrome/Playwright: 10 tests passed, covering CSV upload, XLSX worksheet choice, aggregation, invalid row messages, range selection (100 accepted, 101 rejected), keyboard navigation, sequence cancellation, `en-US` speech calls, a real Web Audio context/oscillator smoke test, decimal precision across chart, extrema, selected point and speech, and responsive upload/music layouts.
-- `npm run build` and `git diff --check`: passed.
-- Physical listening and VoiceOver/NVDA evaluation were not performed.
+**Audio Guidance is not implemented.** The header is a non-interactive Coming soon
+label. `src/guidance.js` provides an inert event adapter and a stop/cancel boundary;
+it never generates speech/scripts, calls APIs, or automatically plays sound.
+See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for event timing, context
+shape, cancellation requirements, and the read-only future-agent interface.
 
-Brand artwork: the original user-provided RGB images are preserved in `assets/brand-source/`; transparent PNG cutouts used by the UI are in `public/brand/`.
+## Modules and verification
+
+- `src/import-data.js`: CSV/XLSX parsing and table preparation.
+- `src/mapping.js`: validation, aggregation, recommendations and explicit range selection.
+- `src/materials.js`: schema validation, immutable snapshots, revisions, Sample and local persistence.
+- `src/main.js`: mode flows and a shared Explorer for Creator/User, focus and keyboard behavior.
+- `src/playback.js`: centralized cancellation and playback; existing recorded engine remains in
+  `src/audioEngine.js`, with arrangements/samples/ambience in their existing modules.
+- `src/guidance.js`: deliberately unimplemented integration adapter.
+
+The automated checks cover original import/mapping/range behavior plus immutable
+revision publication, Creator-to-User equality, JSON export/import into an independent
+browser context, invalid input and failed storage recovery, keyboard controls,
+explicit-only speech, cancellation and real Chrome Web Audio. Tests cannot establish
+physical audio quality or full VoiceOver/NVDA behavior. Those require manual listening
+and assistive-technology testing; do not claim accessibility compliance from automation.
+Review screenshots are saved in `artifacts/screenshots/` by the browser suite.
+
+Brand source images remain in `assets/brand-source/`; UI cutouts are in `public/brand/`.
+Instrument and ambience attribution remains in [SAMPLE_CREDITS.md](SAMPLE_CREDITS.md).
