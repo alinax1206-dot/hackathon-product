@@ -1,0 +1,34 @@
+{
+  "name": "Hammond Organ",
+  "credits": {
+    "source": "FreePats Project - Drawbar Organ Emulation (setBfree)",
+    "url": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+    "license": "CC0 1.0 Universal (Public Domain)"
+  },
+  "samples": [
+    {
+      "note": 56,
+      "file": "Gs3.wav"
+    },
+    {
+      "note": 60,
+      "file": "C4.wav"
+    },
+    {
+      "note": 64,
+      "file": "E4.wav"
+    },
+    {
+      "note": 68,
+      "file": "Gs4.wav"
+    },
+    {
+      "note": 72,
+      "file": "C5.wav"
+    },
+    {
+      "note": 76,
+      "file": "E5.wav"
+    }
+  ]
+}

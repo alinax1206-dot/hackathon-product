@@ -13,6 +13,8 @@ import {
   aggregationLabels,
 } from "./mapping.js";
 import "./style.css";
+import { AudioEngine } from "./audioEngine.js";
+import { STYLES } from "./arrangement.js";
 
 const sample =
   "City,Rainfall\nSeattle,95\nPortland,78\nBoston,65\nAustin,42\nDenver,28";
@@ -36,11 +38,35 @@ const state = {
   mapped: null,
   start: "",
   end: "",
+  musicStyle: "acoustic",
+  playerStatus: "Ready to play.",
 };
 const steps = ["Welcome", "Upload data", "Map columns", "Explore"];
 let audio,
   nodes = [],
   timer;
+const musicEngine = new AudioEngine({ onStateChange: ({ status, rowIndex }) => {
+  state.playerStatus = status === "loading" ? "Loading instrument recordings…" : status === "playing" ? "Playing your data as music." : status === "paused" ? "Music paused." : "Ready to play.";
+  const live = document.querySelector("#player-status");
+  if (live) live.textContent = state.playerStatus;
+  if (rowIndex != null && state.data) {
+    state.selected = rowIndex;
+    updateSelectedPoint();
+  }
+} });
+function updateSelectedPoint() {
+  const point = state.data?.data[state.selected];
+  if (!point) return;
+  document.querySelectorAll("[data-point]").forEach((button) => {
+    const active = Number(button.dataset.point) === state.selected;
+    button.classList.toggle("selected", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const detail = document.querySelector(".point-detail");
+  if (detail) detail.innerHTML = `<span>SELECTED POINT ${state.selected + 1} / ${state.data.data.length}</span><strong>${escape(point.label)} <em>${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button>`;
+  const single = document.querySelector("#single");
+  if (single) single.onclick = () => { stopAll(); note(point.value); };
+}
 const escape = (value) =>
   String(value).replace(
     /[&<>"']/g,
@@ -69,6 +95,7 @@ function stopAudio() {
 }
 function stopAll() {
   stopAudio();
+  musicEngine.stopAudio();
   speechSynthesis.cancel();
 }
 function note(value, start = 0) {
@@ -180,6 +207,13 @@ function openExplorer(start, end) {
   go(3);
 }
 function mappingContent() {
+  if (state.mapped && state.mapped.totalPoints > MAX_EXPLORATION_POINTS) {
+    return `<section class="mapping-screen range-screen"><h1 tabindex="-1">Choose an exploration range</h1>
+      <p>${state.mapped.importedRows} imported rows · ${state.mapped.totalPoints} mapped points. Choose ${MAX_EXPLORATION_POINTS} or fewer continuous points before playback. No range has been selected yet.</p>
+      <div class="panel"><div class="mapping"><label>First point (inclusive)<input id="rangeStart" type="number" min="1" max="${state.mapped.totalPoints}" value="${escape(state.start)}"></label><label>Last point (inclusive)<input id="rangeEnd" type="number" min="1" max="${state.mapped.totalPoints}" value="${escape(state.end)}"></label></div>
+      <button id="applyRange" class="button">Explore selected range</button></div>
+      <div class="actions"><button id="editMapping" type="button">← Edit mapping</button><button id="back" type="button">← Upload</button></div></section>`;
+  }
   const options = (selected) =>
     '<option value="">Choose a column</option>' +
     state.fields
@@ -188,7 +222,7 @@ function mappingContent() {
           `<option value="${escape(f)}" ${f === selected ? "selected" : ""}>${escape(f)}</option>`,
       )
       .join("");
-  return `<section><h1 tabindex="-1">Map your data</h1>
+  return `<section class="mapping-screen"><h1 tabindex="-1">Map your data</h1>
     <p>Original tables are kept separately. Mapping creates a new dataset without sorting or grouping dates.</p>
     <div class="panel"><p>${escape(state.file)} · ${state.rows.length} imported rows in selected worksheet</p>
     <label for="sheet">Worksheet</label><select id="sheet"><option value="">Choose a worksheet</option>${state.sheets.map((s) => `<option value="${escape(s.name)}" ${s.name === state.sheet ? "selected" : ""}>${escape(s.name)}</option>`).join("")}</select>
@@ -208,22 +242,23 @@ function mappingContent() {
           `<option value="${value}" ${state.aggregation === value ? "selected" : ""}>${label}</option>`,
       )
       .join("")}</select></label></div>
-    <h2>Original table preview</h2><div class="table-wrap"><table><caption>First five imported rows; source row 1 contains headers.</caption><thead><tr>${state.fields.map((f) => `<th scope="col">${escape(f)}</th>`).join("")}</tr></thead><tbody>${state.rows
+    <button class="button" id="explore">Validate mapping and continue</button><details class="preview-details"><summary>Original table preview</summary><div class="table-wrap"><table><caption>First five imported rows; source row 1 contains headers.</caption><thead><tr>${state.fields.map((f) => `<th scope="col">${escape(f)}</th>`).join("")}</tr></thead><tbody>${state.rows
       .slice(0, 5)
       .map(
         (r) =>
           `<tr>${state.fields.map((f) => `<td>${escape(r[f] ?? "")}</td>`).join("")}</tr>`,
       )
       .join("")}</tbody></table></div>
-    <button class="button" id="explore">Validate mapping and continue</button>`
+    </details>`
         : ""
     }
-    ${state.mapped ? `<div role="status"><p>${state.mapped.importedRows} imported rows · ${state.mapped.totalPoints} mapped points.</p><p>More than ${MAX_EXPLORATION_POINTS} points. Choose a continuous range explicitly. No exploration range is selected yet.</p></div><div class="mapping"><label>First point (inclusive)<input id="rangeStart" type="number" min="1" max="${state.mapped.totalPoints}" value="${escape(state.start)}"></label><label>Last point (inclusive)<input id="rangeEnd" type="number" min="1" max="${state.mapped.totalPoints}" value="${escape(state.end)}"></label></div><button id="applyRange" class="button">Explore selected range</button>` : ""}
     </div><div class="actions"><button id="back">← Back</button></div></section>`;
 }
+const logo = `<img class="brand-logo" src="/brand/figurewalk-logo-transparent.png" alt="" width="130" height="98">`;
+const mascot = `<img class="mascot" src="/brand/figurewalk-character-transparent.png" alt="" width="532" height="576">`;
 function render() {
   document.querySelector("#app").innerHTML =
-    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home"><span class="mark" aria-hidden="true">◒</span> FigureWalk<span class="beta">EARLY ACCESS</span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><button id="voice" aria-pressed="${state.voice}">◖ <span>Voice guidance ${state.voice ? "on" : "off"}</span></button></div></header><div class="layout"><aside><div class="eyebrow">YOUR DATA, ANOTHER DIMENSION</div><nav aria-label="Progress"><ol>${steps.map((s, i) => `<li ${i === state.step ? 'aria-current="step"' : ""}><span class="stepnum">${i < state.step ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span>${i === state.step ? '<span class="dot"></span>' : ""}</li>`).join("")}</ol></nav><div class="aside-note"><span aria-hidden="true">⌨</span><p>Made for your keyboard.<br>Designed for your ears.</p><small>Tab to move · Enter to choose</small></div></aside><main id="main"><div class="topline"><span>FIGUREWALK / ${String(state.step + 1).padStart(2, "0")}</span><span>ACCESSIBLE BY DESIGN ↗</span></div>${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${content()}<footer><span>A different way to see data.</span><span>Built with accessibility at heart <span aria-hidden="true">✳</span></span></footer></main></div>`;
+    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home">${logo}<span class="brand-words"><strong>FigureWalk</strong><small>STUDIO</small></span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><button id="voice" aria-pressed="${state.voice}">◖ <span>Voice guidance ${state.voice ? "on" : "off"}</span></button></div></header><div class="layout"><aside><nav aria-label="Progress"><ol>${steps.map((s, i) => `<li ${i === state.step ? 'aria-current="step"' : ""}><span class="stepnum">${i < state.step ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span></li>`).join("")}</ol></nav><div class="mascot-wrap">${mascot}</div></aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${content()}<footer><span>FigureWalk Studio · Your data stays in this browser.</span></footer></main></div>`;
   document.querySelector("#home").onclick = (e) => {
     e.preventDefault();
     go(0);
@@ -244,13 +279,13 @@ function content() {
   if (state.step === 0)
     return `<section class="hero"><div class="eyebrow">LISTEN. EXPLORE. UNDERSTAND.</div><h1 tabindex="-1">Hear the<br><em>bigger picture.</em></h1><p class="intro">Turn your data into sound. Explore patterns, discover differences, and find your own way through a chart.</p><div class="wave" aria-hidden="true">${[24, 40, 32, 62, 85, 53, 107, 137, 87, 60, 99, 153, 121, 76, 48, 84, 112, 69, 42, 58, 31, 46, 22].map((h, i) => `<i style="height:${h}px;--n:${i}"></i>`).join("")}</div><div class="cards"><button class="mode primary-card" id="start"><span class="card-icon">◉</span><span class="eyebrow">EXPLORE WITH SOUND</span><h2>Start your walk <span>↗</span></h2><p>Bring a dataset. We'll help you hear it.</p><span class="card-bottom">Upload your data <b>→</b></span></button><button class="mode" id="sample"><span class="card-icon">✳</span><span class="eyebrow">A LITTLE CURIOUS?</span><h2>Try a sample <span>↗</span></h2><p>No file needed. Explore rainfall by city.</p><span class="card-bottom">Take a quick tour <b>→</b></span></button></div><p class="privacy">↳ Your file is processed in this browser. No upload to a server.</p></section>`;
   if (state.step === 1)
-    return `<section><div class="eyebrow">01 / BRING YOUR DATA</div><h1 tabindex="-1">Every dataset<br>has a <em>story.</em></h1><p class="intro">Start with a CSV or XLSX file. One column for categories, another for numbers.</p><div class="upload"><span aria-hidden="true">↥</span><h2>Choose your dataset</h2><p>CSV or XLSX with column headers · One data series</p><label class="button" for="file">Choose CSV or XLSX file</label><input id="file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><p class="muted">Example columns: City, Rainfall</p></div><button id="sample" class="text-button">Or explore our sample dataset →</button><div class="actions"><button id="back">← Back</button></div></section>`;
+    return `<section class="upload-screen"><h1 tabindex="-1">What shall we explore today?</h1><div class="upload-paper"><div class="paper-tab">01 · Bring your data</div><div class="upload-main"><div class="upload-action"><div class="upload-symbol" aria-hidden="true">↥</div><h2>Drop a CSV or Excel file</h2><p>Choose a spreadsheet with column headers. Files stay in your browser.</p><label class="button" for="file">Choose a file</label><input id="file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"><button id="sample" class="text-button">Or try a sample →</button></div></div><div class="sticky-note" aria-hidden="true">${logo}<strong>Let's find<br>the patterns.</strong></div><div class="upload-steps" aria-label="Steps"><span>↥ &nbsp; Upload</span><span aria-hidden="true">→</span><span>▥ &nbsp; Map</span><span aria-hidden="true">→</span><span>♫ &nbsp; Listen</span></div></div><div class="actions"><button id="back">← Back</button></div></section>`;
   if (state.step === 2) return mappingContent();
   const s = summary(),
     d = state.data.data,
     point = d[state.selected],
     range = Math.max(...d.map((p) => Math.abs(p.value))) || 1;
-  return `<section><div class="eyebrow">03 / YOUR AUDIO EXPLORER</div><h1 tabindex="-1">Meet your data.<br><em>One note at a time.</em></h1><p class="intro">${escape(rangeDescription(state.data))} ${escape(aggregationLabels[state.data.aggregation])}. ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}. Higher values play higher notes.</p><div class="stats"><div><small>DATA POINTS</small><strong>${s.count}</strong></div><div><small>HIGHEST · ${escape(s.hi.label)}</small><strong>${formatValue(s.hi.value, state.data)}</strong></div><div><small>LOWEST · ${escape(s.lo.label)}</small><strong>${formatValue(s.lo.value, state.data)}</strong></div></div><div class="panel chart-panel"><div class="chart-header"><h2>${escape(state.data.title)}</h2><button id="overview">Read overview</button></div><div class="chart" role="group" aria-label="Data points. Use left and right arrows to move. Enter plays a note.">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}"><span class="bar-value">${formatValue(p.value, state.data)} ${escape(state.data.unit)}</span><span class="bar" style="height:${Math.max(3, (Math.abs(p.value) / range) * 145)}px"></span><span>${escape(p.label)}</span></button>`).join("")}</div><div class="player"><button class="button" id="play">▶ Play all points</button><button id="stop">■ Stop</button><span>Low value <span aria-hidden="true">↗</span> High pitch</span></div></div><div class="point-detail" aria-live="polite"><span>SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong>${escape(point.label)} <em>${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button></div><div class="actions"><button id="back">← Edit mapping</button><span class="muted">← → Move between points · Enter to hear</span></div></section>`;
+  return `<section class="studio-screen"><h1 tabindex="-1">${escape(state.data.title)}</h1><p class="intro">${escape(rangeDescription(state.data))} · ${escape(aggregationLabels[state.data.aggregation])} · ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</p><div class="studio-grid"><div class="chart-area"><div class="chart-header"><h2>Chart to music</h2><button id="overview">Read overview</button></div><div class="chart" role="group" aria-label="Data points. Use left and right arrows to move. Enter plays a note.">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}"><span class="bar-value">${formatValue(p.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(p.value) / range) * 245)}px;--bar-index:${i}"></span><span class="bar-label">${escape(p.label)}</span></button>`).join("")}</div><div class="music-player"><button class="button play-button" id="play" aria-label="Play all points">▶ <span>Listen to data</span></button><button class="button" id="play-music">♫ Play as music</button><button id="pause-music" type="button">Pause</button><button id="stop" type="button">Stop</button><label>Music style <select id="music-style">${Object.entries(STYLES).map(([key, value]) => `<option value="${key}" ${key === state.musicStyle ? "selected" : ""}>${escape(value.name)}</option>`).join("")}</select></label><p id="player-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p></div></div><div class="point-side"><div class="point-detail" aria-live="polite"><span>SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong>${escape(point.label)} <em>${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button></div><div class="stat-note stats"><strong>Pattern at a glance</strong><p>${escape(s.hi.label)} is highest at ${formatValue(s.hi.value, state.data)} ${escape(state.data.unit)}. ${escape(s.lo.label)} is lowest at ${formatValue(s.lo.value, state.data)} ${escape(state.data.unit)}.</p></div></div></div><p class="keyboard-hint">Use ← → to move between bars · Enter to hear a point · Escape to stop</p><div class="actions"><button id="back">← Edit mapping</button></div></section>`;
 }
 function bind() {
   const on = (id, fn) => {
@@ -265,19 +300,29 @@ function bind() {
     ),
   );
   on("back", () => go(state.step - 1));
+  on("editMapping", () => { invalidate(); render(); document.querySelector("h1")?.focus(); });
+  const handleSelectedFile = async (selectedFile) => {
+    if (!selectedFile) return;
+    try {
+      stopAll();
+      loadSheets(await parseFile(selectedFile), selectedFile.name);
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  };
   const file = document.querySelector("#file");
-  if (file)
-    file.onchange = async () => {
-      if (!file.files[0]) return;
-      try {
-        stopAll();
-        const selectedFile = file.files[0];
-        loadSheets(await parseFile(selectedFile), selectedFile.name);
-      } catch (e) {
-        state.error = e.message;
-        render();
-      }
+  if (file) file.onchange = () => handleSelectedFile(file.files[0]);
+  const dropZone = document.querySelector(".upload-paper");
+  if (dropZone) {
+    dropZone.ondragover = (event) => { event.preventDefault(); dropZone.classList.add("drag-over"); };
+    dropZone.ondragleave = () => dropZone.classList.remove("drag-over");
+    dropZone.ondrop = (event) => {
+      event.preventDefault();
+      dropZone.classList.remove("drag-over");
+      handleSelectedFile(event.dataTransfer?.files?.[0]);
     };
+  }
   for (const key of [
     "x",
     "y",
@@ -357,6 +402,18 @@ function bind() {
     }
   });
   on("stop", stopAll);
+  on("play-music", () => {
+    stopAll();
+    musicEngine.playArrangement({ title: state.data.title, xAxis: state.data.xAxis, series: [{ key: state.data.yAxis }], data: state.data.data.map((point) => ({ label: point.label, values: { [state.data.yAxis]: point.value } })) }, { playback: "music", style: state.musicStyle }).catch((error) => { state.playerStatus = error.message; const status = document.querySelector("#player-status"); if (status) status.textContent = error.message; });
+  });
+  on("pause-music", () => {
+    if (musicEngine.status === "paused") musicEngine.resume().catch((error) => { state.playerStatus = error.message; });
+    else musicEngine.pause();
+    const button = document.querySelector("#pause-music");
+    if (button) button.textContent = musicEngine.status === "paused" ? "Continue" : "Pause";
+  });
+  const style = document.querySelector("#music-style");
+  if (style) style.onchange = () => { stopAll(); state.musicStyle = style.value; };
   on("overview", () => {
     state.voice = true;
     render();

@@ -1,0 +1,26 @@
+{
+  "name": "Acoustic Guitar",
+  "credits": {
+    "source": "Discord GM Bank - Martin HD28 Steel String (Jeff Learman)",
+    "url": "https://github.com/sfzinstruments/Discord-SFZ-GM-Bank",
+    "license": "CC0 1.0 Universal (Public Domain)"
+  },
+  "samples": [
+    {
+      "note": 55,
+      "file": "G3.wav"
+    },
+    {
+      "note": 61,
+      "file": "Db4.wav"
+    },
+    {
+      "note": 68,
+      "file": "Ab4.wav"
+    },
+    {
+      "note": 74,
+      "file": "D5.wav"
+    }
+  ]
+}

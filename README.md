@@ -6,6 +6,18 @@ An accessible single-series data explorer: CSV/XLSX → mapping → explicit exp
 
 Node.js 20.19+ or 22.12+ is required.
 
+For teammates, download this version with:
+
+```sh
+git clone https://github.com/alinax1206-dot/hackathon-product.git
+cd hackathon-product
+git switch feat/figurewalk-audio-ui
+npm ci
+npm run dev
+```
+
+Open the local URL printed by Vite. If you already cloned the repository, run `git fetch origin` and `git switch feat/figurewalk-audio-ui` instead of cloning again.
+
 ```sh
 npm install
 npm run dev
@@ -72,6 +84,12 @@ Explorer/module output example:
 
 The UI and existing Web Audio/browser speech flow are in `src/main.js`; styling uses plain CSS. No backend, AI calls, database or multi-series support is added. Full VoiceOver/NVDA testing and physical audio listening are still needed before claiming accessibility compliance or audio quality.
 
+## Local integration (2026-11-07)
+
+The `feat/figurewalk-audio-ui` branch starts from upstream main commit `42ad11d` and adds the existing `audio-work` recorded-instrument engine to the new single-series CSV/XLSX mapping flow. The original oscillator sonification remains available as **Listen to data**; **Play as music** uses local instrument samples and the selected music style. The Start/upload and Studio/chart-to-music views use responsive RdBu colors, the supplied three-bar note logo and its separate small note character. Instrument and ambience attribution is in `SAMPLE_CREDITS.md`. No file is sent to a backend.
+
+Run `npm ci`, then `npm run dev` and open the displayed local URL. Run `npm test`, `npm run build`, and `npm run test:browser` for verification. If Playwright Chromium is not installed, use `FIGUREWALK_CHROME_PATH` to point to a local Chrome executable.
+
 ## Excel dependency provenance
 
 `read-excel-file@9.3.14` was installed from the official npm registry. Its package metadata links to the author's [GitLab repository](https://gitlab.com/catamphetamine/read-excel-file); the [official documentation](https://github.com/catamphetamine/read-excel-file#readme) documents the universal API used here. Registry metadata checked on 2026-11-07 reports modification on 2026-10-29 and tarball `https://registry.npmjs.org/read-excel-file/-/read-excel-file-9.3.14.tgz`. `package-lock.json` records the resolved URL and integrity. The legacy npm `xlsx` package is not used.
@@ -79,6 +97,8 @@ The UI and existing Web Audio/browser speech flow are in `src/main.js`; styling 
 ## Verification performed (2026-11-07)
 
 - `npm test`: 6 conversion tests passed, including the committed three-sheet XLSX fixture.
-- Chrome/Playwright: 6 tests passed, covering CSV upload, XLSX worksheet choice, aggregation, invalid row messages, range selection (100 accepted, 101 rejected), keyboard navigation, sequence cancellation, `en-US` speech calls, a real Web Audio context/oscillator smoke test, and decimal precision across chart, extrema, selected point and speech.
+- Chrome/Playwright: 10 tests passed, covering CSV upload, XLSX worksheet choice, aggregation, invalid row messages, range selection (100 accepted, 101 rejected), keyboard navigation, sequence cancellation, `en-US` speech calls, a real Web Audio context/oscillator smoke test, decimal precision across chart, extrema, selected point and speech, and responsive upload/music layouts.
 - `npm run build` and `git diff --check`: passed.
 - Physical listening and VoiceOver/NVDA evaluation were not performed.
+
+Brand artwork: the original user-provided RGB images are preserved in `assets/brand-source/`; transparent PNG cutouts used by the UI are in `public/brand/`.
