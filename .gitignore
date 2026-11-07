@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # Browser verification artifacts
 test-results/
 playwright-report/
+
+# Local AI backup created during migration
+.chartaloud-ui-ai-backup-*/

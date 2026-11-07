@@ -13,6 +13,7 @@ import {
   aggregationLabels,
 } from "./mapping.js";
 import "./style.css";
+import "./aiAdvisor.css";
 import { Playback } from "./playback.js";
 import { createGuidanceAdapter } from "./guidance.js";
 import {
@@ -32,6 +33,7 @@ const state = {
   step: 0,
   rows: [],
   fields: [],
+  headerAdjustments: [],
   x: "",
   y: "",
   data: null,
@@ -63,8 +65,16 @@ const state = {
   end: "",
   musicStyle: "acoustic",
   playerStatus: "Ready to play.",
+  aiDataset: null,
+  soundMapping: "linear",
+  aiRecommendation: null,
+  aiStatus: "",
+  aiBusy: false,
+  aiManualOverride: false,
+  aiSettingsOpen: false,
 };
 let importGeneration = 0;
+let aiRequestGeneration = 0;
 const playback = new Playback({
   onPoint: (index) => {
     state.selected = index;
@@ -121,7 +131,7 @@ function updatePlaybackButtons() {
   if (musicButton) {
     musicButton.textContent = playback.musicLabel;
     musicButton.disabled =
-      playback.kind === "music" && playback.engine.status === "loading";
+      state.aiBusy || (playback.kind === "music" && playback.engine.status === "loading");
   }
 }
 function updateSelectedPoint() {
@@ -179,17 +189,26 @@ function focusTitle() {
   document.querySelector("h1")?.focus();
 }
 function go(step) {
-  if (state.step === 3 && step !== 3) emitGuidance("contextExited");
+  if (state.step === 3 && step !== 3) {
+    emitGuidance("contextExited");
+    aiRequestGeneration++;
+    state.aiBusy = false;
+  }
   stopAll();
   state.step = step;
   state.error = "";
   state.notice = "";
   if (state.mode === "creator") state.creatorStep = step;
+  const suggestAutomatically = step === 3 &&
+    (resetAiForDataset() || (!state.aiRecommendation && !state.aiBusy && !state.aiManualOverride));
+  if (suggestAutomatically) requestAiSuggestion({ renderBeforeFetch: false });
   render();
   focusTitle();
 }
 function home() {
   importGeneration++;
+  aiRequestGeneration++;
+  state.aiBusy = false;
   stopAll();
   emitGuidance("contextExited");
   if (state.mode === "creator") {
@@ -273,6 +292,7 @@ function chooseSheet(name) {
   state.sheet = name;
   state.rows = [];
   state.fields = [];
+  state.headerAdjustments = [];
   state.aggregation = "none";
   state.unit = "";
   state.decimalPlaces = DEFAULT_DECIMAL_PLACES;
@@ -282,8 +302,9 @@ function chooseSheet(name) {
     state.sheets.find((s) => s.name === name).table,
   );
   Object.assign(state, prepared);
-  state.x = state.fields[0];
-  state.y = recommendValue(state.fields, state.rows, state.x);
+  const generated = new Set(state.headerAdjustments.filter(({ original }) => !original).map(({ name }) => name));
+  state.x = state.fields.find((field) => !generated.has(field)) || state.fields[0];
+  state.y = recommendValue(state.fields.filter((field) => !generated.has(field)), state.rows, state.x);
 }
 function loadSheets(sheets, name) {
   invalidate();
@@ -293,6 +314,7 @@ function loadSheets(sheets, name) {
   state.sheet = "";
   state.rows = [];
   state.fields = [];
+  state.headerAdjustments = [];
   go(2);
   if (sheets.length === 1) {
     try {
@@ -319,6 +341,62 @@ function openExplorer(start, end) {
   state.creatorData = state.data;
   go(3);
 }
+function resetAiForDataset() {
+  if (!state.data || state.aiDataset === state.data) return false;
+  state.aiDataset = state.data;
+  state.soundMapping = "linear";
+  state.musicStyle = "acoustic";
+  state.aiRecommendation = null;
+  state.aiStatus = "Setting up sound…";
+  state.aiBusy = false;
+  state.aiManualOverride = false;
+  state.aiSettingsOpen = false;
+  playback.mapping = "linear";
+  return true;
+}
+async function requestAiSuggestion({ renderBeforeFetch = true } = {}) {
+  if (!state.data || state.aiBusy) return;
+  const dataset = state.data;
+  const requestGeneration = ++aiRequestGeneration;
+  state.aiBusy = true;
+  state.aiStatus = "Choosing sound…";
+  if (renderBeforeFetch) {
+    const focusedId = document.activeElement?.id;
+    render();
+    if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
+  }
+  try {
+    const response = await fetch("/api/sound-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: dataset.data.map((point) => point.value) }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "AI request failed");
+    if (!["linear", "contrast"].includes(result.mapping) || !STYLES[result.style] || typeof result.reason !== "string")
+      throw new Error("Invalid AI recommendation");
+    if (state.data !== dataset || state.step !== 3 || requestGeneration !== aiRequestGeneration) return;
+    state.aiRecommendation = result;
+    if (state.aiManualOverride) {
+      state.aiStatus = "Your sound choice is kept.";
+    } else {
+      state.soundMapping = result.mapping;
+      playback.mapping = result.mapping;
+      state.musicStyle = result.style;
+      state.aiStatus = `AI chose ${STYLES[result.style].name}. Ready to play.`;
+    }
+  } catch (error) {
+    if (state.data === dataset && state.step === 3 && requestGeneration === aiRequestGeneration)
+      state.aiStatus = "AI is unavailable. Standard sound is ready to play.";
+  } finally {
+    if (state.data === dataset && state.step === 3 && requestGeneration === aiRequestGeneration) {
+      state.aiBusy = false;
+      const focusedId = document.activeElement?.id;
+      render();
+      if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
+    }
+  }
+}
 function mappingContent() {
   if (state.mapped && state.mapped.totalPoints > MAX_EXPLORATION_POINTS) {
     return `<section class="mapping-screen range-screen"><h1 tabindex="-1">Choose an exploration range</h1>
@@ -339,6 +417,7 @@ function mappingContent() {
     <p>Original tables are kept separately. Mapping creates a new dataset without sorting or grouping dates.</p>
     <div class="panel"><p>${escape(state.file)} · ${state.rows.length} imported rows in selected worksheet</p>
     <label for="sheet">Worksheet</label><select id="sheet"><option value="">Choose a worksheet</option>${state.sheets.map((s) => `<option value="${escape(s.name)}" ${s.name === state.sheet ? "selected" : ""}>${escape(s.name)}</option>`).join("")}</select>
+    ${state.headerAdjustments.length ? `<div class="notice" role="status"><strong>Column names adjusted for import.</strong> Your original file was not changed.<ul>${state.headerAdjustments.map(({ column, original, name }) => `<li>Column ${column}: ${original ? `“${escape(original)}”` : "blank header"} → “${escape(name)}”</li>`).join("")}</ul></div>` : ""}
     ${
       state.fields.length
         ? `<div class="mapping">
@@ -354,7 +433,7 @@ function mappingContent() {
           `<option value="${value}" ${state.aggregation === value ? "selected" : ""}>${label}</option>`,
       )
       .join("")}</select></label></div>
-    <button class="button" id="explore">Validate mapping and continue</button><details class="preview-details"><summary>Original table preview</summary><div class="table-wrap"><table><caption>First five imported rows; source row 1 contains headers.</caption><thead><tr>${state.fields.map((f) => `<th scope="col">${escape(f)}</th>`).join("")}</tr></thead><tbody>${state.rows
+    <button class="button" id="explore">Validate mapping and continue</button><details class="preview-details"><summary>Imported table preview</summary><div class="table-wrap"><table><caption>First five imported rows; adjusted column names appear above.</caption><thead><tr>${state.fields.map((f) => `<th scope="col">${escape(f)}</th>`).join("")}</tr></thead><tbody>${state.rows
       .slice(0, 5)
       .map(
         (r) =>
@@ -544,6 +623,20 @@ function render() {
   };
   bind();
 }
+function aiAdvisorContent() {
+  if (!state.data) return "";
+  const suggested = state.aiRecommendation;
+  return `<section class="ai-advisor" aria-labelledby="ai-advisor-title">
+    <div class="ai-primary"><div><h2 id="ai-advisor-title">Music for your data</h2><p class="ai-status" role="status">${escape(state.aiStatus)}</p></div><button class="button" type="button" id="play-music" ${state.aiBusy ? "disabled" : ""}>${playback.musicLabel}</button></div>
+    <details class="ai-settings" ${state.aiSettingsOpen ? "open" : ""}><summary>Adjust music</summary><div class="ai-controls">
+      <label for="music-style">Music style<select id="music-style">${Object.entries(STYLES).map(([key, value]) => `<option value="${key}" ${key === state.musicStyle ? "selected" : ""}>${escape(value.name)}</option>`).join("")}</select></label>
+      <label for="ai-mapping">Sound detail<select id="ai-mapping"><option value="linear" ${state.soundMapping === "linear" ? "selected" : ""}>Standard</option><option value="contrast" ${state.soundMapping === "contrast" ? "selected" : ""}>Emphasize smaller values</option></select></label>
+      <button type="button" id="ai-suggest" ${state.aiBusy ? "disabled" : ""}>${state.aiBusy ? "Choosing…" : "Try AI again"}</button>
+      ${suggested && (state.soundMapping !== suggested.mapping || state.musicStyle !== suggested.style) ? `<button type="button" id="ai-apply">Use AI choice</button>` : ""}
+    </div>${suggested ? `<details class="ai-details"><summary>Why this music?</summary><p>${escape(suggested.reason)}</p></details>` : ""}<p class="ai-privacy">Your file stays here. Only summary numbers go to AI.</p></details>
+  </section>`;
+}
+
 function content() {
   if (state.step === 0)
     return `<section class="hero"><div class="eyebrow">LISTEN. EXPLORE. UNDERSTAND.</div><h1 tabindex="-1">Hear the<br><em>bigger picture.</em></h1><p class="intro">Prepare a chart for learning, or explore prepared materials with sound.</p><div class="wave" aria-hidden="true">${[24, 40, 32, 62, 85, 53, 107, 137, 87, 60, 99, 153, 121, 76, 48, 84, 112, 69, 42, 58, 31, 46, 22].map((h, i) => `<i style="height:${h}px;--n:${i}"></i>`).join("")}</div><div class="cards"><button class="mode primary-card" id="creator"><span class="card-icon" aria-hidden="true">▥</span><h2>Creator Mode</h2><p>Prepare charts for learning.</p></button><button class="mode" id="user"><span class="card-icon" aria-hidden="true">♫</span><h2>User Mode</h2><p>Explore prepared charts with sound.</p></button></div>${state.dirty ? '<p class="notice">You have unpublished changes. Your draft is kept while switching modes in this tab.</p>' : ""}<p class="privacy">Saved in this browser. Export a learning material JSON file to use it on another device.</p></section>`;
@@ -557,16 +650,7 @@ function content() {
     point = d[state.selected],
     range = Math.max(...d.map((p) => Math.abs(p.value))) || 1,
     lesson = state.mode === "user" ? state.material : state.metadata;
-  return `<section class="studio-screen"><h1 tabindex="-1">${escape(state.mode === "user" ? state.material.title : state.metadata.title || state.data.title)}</h1>${state.mode === "creator" && !state.learnerPreview ? metadataContent() : ""}${state.learnerPreview ? '<p class="notice">Preview as learner · Unpublished draft</p>' : ""}${state.mode === "user" || state.learnerPreview ? `<p>${escape(lesson.description)}</p>${lesson.learningGoal ? `<p>Learning goal: ${escape(lesson.learningGoal)}</p>` : ""}` : ""}<p class="intro">${escape(rangeDescription(state.data))} · ${escape(aggregationLabels[state.data.aggregation])} · ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</p><div class="overview-panel" id="overview-text"><h2>Overview</h2><p>${escape(overviewText())}</p></div><div class="studio-grid"><div class="chart-area"><div class="chart-header"><h2>Chart to music</h2><button id="overview">Show overview</button></div><div class="chart" id="explorer" tabindex="0" role="group" aria-label="Explore data points" aria-describedby="keyboard-instructions">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}" aria-describedby="point-button-help"><span class="bar-value">${formatValue(p.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(p.value) / range) * 245)}px;--bar-index:${i}"></span><span class="bar-label">${escape(p.label)}</span></button>`).join("")}</div><div class="music-player"><button class="button play-button" id="play">${playback.dataLabel(state.data)}</button><button class="button" id="play-music">${playback.musicLabel}</button><button id="pause-music" type="button" ${playback.canPause ? "" : "disabled"}>${playback.pauseLabel}</button><label>Music style <select id="music-style">${Object.entries(
-    STYLES,
-  )
-    .map(
-      ([key, value]) =>
-        `<option value="${key}" ${key === state.musicStyle ? "selected" : ""}>${escape(value.name)}</option>`,
-    )
-    .join(
-      "",
-    )}</select></label><p id="player-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p></div></div><div class="point-side"><div class="point-detail"><span id="selected-count">SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong><span id="selected-label">${escape(point.label)}</span> <em id="selected-value">${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button><button id="read-value">Read exact value</button><div class="actions"><button id="previous">Previous point</button><button id="next">Next point</button><button id="first">First point</button><button id="last">Last point</button></div></div><div class="stat-note stats"><strong>Pattern at a glance</strong><p>${escape(s.hi.label)} is highest at ${formatValue(s.hi.value, state.data)} ${escape(state.data.unit)}. ${escape(s.lo.label)} is lowest at ${formatValue(s.lo.value, state.data)} ${escape(state.data.unit)}.</p></div></div></div><p id="selection-status" class="sr-only" role="status"></p><p class="keyboard-hint" id="keyboard-instructions">Focus the exploration area: Left / Right select a point; Home / End select the first / last point; Enter reads its exact value; R plays its pitch; Space plays or pauses the sequence. Escape stops audio and value reading.</p><p class="keyboard-hint" id="point-button-help">Data point buttons select a point. Use the exploration area or the equivalent buttons to read a value or play a note.</p><label class="letter-option"><input id="letter-keys" type="checkbox" ${state.letterKeys ? "checked" : ""}> Enable R shortcut in the exploration area</label><div class="actions"><button id="focus-explore">Focus exploration area</button><button id="back">${state.mode === "user" ? "Back to materials" : state.learnerPreview ? "Back to preview" : "Edit mapping"}</button>${state.mode === "creator" && !state.learnerPreview ? '<button id="preview-learner">Preview as learner</button><button id="review-publish" class="button">Review and publish</button>' : ""}${state.mode === "user" ? '<button id="export-current">Export material JSON</button>' : ""}</div></section>`;
+  return `<section class="studio-screen"><h1 tabindex="-1">${escape(state.mode === "user" ? state.material.title : state.metadata.title || state.data.title)}</h1>${aiAdvisorContent()}${state.mode === "creator" && !state.learnerPreview ? metadataContent() : ""}${state.learnerPreview ? '<p class="notice">Preview as learner · Unpublished draft</p>' : ""}${state.mode === "user" || state.learnerPreview ? `<p>${escape(lesson.description)}</p>${lesson.learningGoal ? `<p>Learning goal: ${escape(lesson.learningGoal)}</p>` : ""}` : ""}<p class="intro">${escape(rangeDescription(state.data))} · ${escape(aggregationLabels[state.data.aggregation])} · ${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</p><div class="overview-panel" id="overview-text"><h2>Overview</h2><p>${escape(overviewText())}</p></div><div class="studio-grid"><div class="chart-area"><div class="chart-header"><h2>Chart to music</h2><button id="overview">Show overview</button></div><div class="chart" id="explorer" tabindex="0" role="group" aria-label="Explore data points" aria-describedby="keyboard-instructions">${d.map((p, i) => `<button class="bar-item ${i === state.selected ? "selected" : ""}" data-point="${i}" aria-label="${escape(p.label)}, ${formatValue(p.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${i === state.selected}" aria-describedby="point-button-help"><span class="bar-value">${formatValue(p.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(p.value) / range) * 245)}px;--bar-index:${i}"></span><span class="bar-label">${escape(p.label)}</span></button>`).join("")}</div><div class="music-player"><button class="button play-button" id="play">${playback.dataLabel(state.data)}</button><button id="pause-music" type="button" ${playback.canPause ? "" : "disabled"}>${playback.pauseLabel}</button><p id="player-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p></div></div><div class="point-side"><div class="point-detail"><span id="selected-count">SELECTED POINT ${state.selected + 1} / ${d.length}</span><strong><span id="selected-label">${escape(point.label)}</span> <em id="selected-value">${formatValue(point.value, state.data)} ${escape(state.data.unit)}</em></strong><button id="single">♪ Play this point</button><button id="read-value">Read exact value</button><div class="actions"><button id="previous">Previous point</button><button id="next">Next point</button><button id="first">First point</button><button id="last">Last point</button></div></div><div class="stat-note stats"><strong>Pattern at a glance</strong><p>${escape(s.hi.label)} is highest at ${formatValue(s.hi.value, state.data)} ${escape(state.data.unit)}. ${escape(s.lo.label)} is lowest at ${formatValue(s.lo.value, state.data)} ${escape(state.data.unit)}.</p></div></div></div><p id="selection-status" class="sr-only" role="status"></p><p class="keyboard-hint" id="keyboard-instructions">Focus the exploration area: Left / Right select a point; Home / End select the first / last point; Enter reads its exact value; R plays its pitch; Space plays or pauses the sequence. Escape stops audio and value reading.</p><p class="keyboard-hint" id="point-button-help">Data point buttons select a point. Use the exploration area or the equivalent buttons to read a value or play a note.</p><label class="letter-option"><input id="letter-keys" type="checkbox" ${state.letterKeys ? "checked" : ""}> Enable R shortcut in the exploration area</label><div class="actions"><button id="focus-explore">Focus exploration area</button><button id="back">${state.mode === "user" ? "Back to materials" : state.learnerPreview ? "Back to preview" : "Edit mapping"}</button>${state.mode === "creator" && !state.learnerPreview ? '<button id="preview-learner">Preview as learner</button><button id="review-publish" class="button">Review and publish</button>' : ""}${state.mode === "user" ? '<button id="export-current">Export material JSON</button>' : ""}</div></section>`;
 }
 function bind() {
   const on = (id, fn) => {
@@ -741,6 +825,34 @@ function bind() {
       render();
     }
   });
+  on("ai-suggest", () => {
+    state.aiManualOverride = false;
+    requestAiSuggestion();
+  });
+  const aiSettings = document.querySelector(".ai-settings");
+  if (aiSettings) aiSettings.ontoggle = () => { state.aiSettingsOpen = aiSettings.open; };
+  const mappingSelect = document.getElementById("ai-mapping");
+  if (mappingSelect) mappingSelect.onchange = () => {
+    stopAll();
+    state.aiManualOverride = true;
+    state.aiSettingsOpen = true;
+    state.soundMapping = mappingSelect.value;
+    playback.mapping = state.soundMapping;
+    state.aiStatus = "Your sound choice is ready to play.";
+    render();
+    document.getElementById("ai-mapping")?.focus();
+  };
+  on("ai-apply", () => {
+    if (!state.aiRecommendation || !state.data) return;
+    stopAll();
+    state.aiManualOverride = false;
+    state.soundMapping = state.aiRecommendation.mapping;
+    playback.mapping = state.soundMapping;
+    state.musicStyle = state.aiRecommendation.style;
+    state.aiStatus = "AI sound choice is ready to play.";
+    render();
+    document.getElementById("ai-mapping")?.focus();
+  });
   on("play-music", () => {
     if (
       playback.kind === "music" &&
@@ -791,6 +903,11 @@ function bind() {
     style.onchange = () => {
       stopAll();
       state.musicStyle = style.value;
+      state.aiManualOverride = true;
+      state.aiSettingsOpen = true;
+      state.aiStatus = "Your music choice is ready to play.";
+      render();
+      document.getElementById("music-style")?.focus();
     };
   document.querySelectorAll("[data-point]").forEach((el) => {
     el.onclick = () => selectPoint(Number(el.dataset.point));

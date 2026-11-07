@@ -58,4 +58,4 @@ mode, current User material (or null), selected point with stable point ID, and
 computed `{ hi, lo, count }`. Mutating the copy cannot change application state.
 Only this explicit pull interface contains the active material; events do not
 send it anywhere. Facts come from the same selected dataset that the Explorer and
-playback consume. There is no AI/chat integration.
+playback consume. The guidance adapter does not call the separate AI sound advisor.

@@ -1,9 +1,11 @@
 import { AudioEngine } from "./audioEngine.js";
+import { normalizedPitch } from "./soundMapping.js";
 // One owner for speech, oscillator notes, recorded music, and cancellation tokens.
 export class Playback {
   constructor({ onPoint, onStatus, onError }) {
     Object.assign(this, { onPoint, onStatus, onError });
     this.generation = 0;
+    this.mapping = "linear";
     this.nodes = new Set();
     this.status = "stopped";
     this.index = 0;
@@ -126,11 +128,7 @@ export class Playback {
       const values = dataset.data.map((p) => p.value),
         min = Math.min(...values),
         max = Math.max(...values);
-      const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
-      const pitch =
-        max === min
-          ? 0.5
-          : (value / scale - min / scale) / (max / scale - min / scale);
+      const pitch = normalizedPitch(value, { min, max }, this.mapping);
       const osc = this.context.createOscillator(),
         gain = this.context.createGain(),
         at = this.context.currentTime;
@@ -220,7 +218,7 @@ export class Playback {
             values: { [dataset.yAxis]: p.value },
           })),
         },
-        { playback: "music", style },
+        { playback: "music", style, mapping: this.mapping },
       )
       .catch((e) => {
         if (token === this.generation) this.onError(e.message);

@@ -1,10 +1,16 @@
 # ChartAloud Studio
 
-A browser-only single-series CSV/XLSX chart learning tool. Creator Mode prepares
+A local-first single-series CSV/XLSX chart learning tool. Creator Mode prepares
 and publishes learning materials; User Mode opens prepared charts without mapping
 or uploading spreadsheets. Generated UI, errors and exact-value speech are English;
 imported labels are preserved. The blue/peach stationery style and supplied brand
 artwork are retained.
+
+On the Explorer screen, the local AI advisor automatically selects a music preset
+and pitch mapping from numeric summary statistics. ChartAloud's recorded-instrument
+engine plays the music after the user presses **Play as music**. The compact sound
+panel appears near the top; **Adjust music** exposes manual choices and an optional
+explanation. The AI does not generate audio or receive raw rows, labels, or files.
 
 ## Run and verify
 
@@ -29,10 +35,24 @@ FIGUREWALK_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 npm run test:browser
 ```
 
+### Local AI setup
+
+Copy `.env.example` to `.env.local`, choose `AI_PROVIDER=tinker` or
+`AI_PROVIDER=gemini`, and enter the matching API key and model. For Tinker, use
+the full sampler checkpoint path in `TINKER_MODEL_PATH`. Restart Vite after
+changing `.env.local`. The Vite development server handles `/api/sound-map`;
+this local endpoint is not included in the static production build.
+
+Without a working AI service, Explorer still plays the standard acoustic sound.
+The uploaded CSV/XLSX stays in the browser. The local server computes summary
+statistics and sends only those statistics to the chosen provider. API keys stay
+on the server and `.env.local` is ignored by Git.
+
 ## Creator and learner flows
 
 Home provides real Creator Mode and User Mode buttons. There is no global Space
-shortcut and no automatic guidance or playback.
+shortcut and no automatic guidance or playback. AI sound selection starts
+automatically when Explorer opens; audio starts only when the user presses Play.
 
 Creator: Import CSV/XLSX → Map → Preview → Publish learning material. Try a sample
 is available inside Import. Title is required; description and learning goal are
@@ -48,8 +68,8 @@ another material begins a separate material with a new ID on publication.
 
 Mode switching and Back to home preserve the current Creator draft in this tab;
 unpublished changes are indicated. Drafts do not survive page reload or tab close.
-Published materials persist until browser storage is cleared. No account, backend,
-database, or cross-device service exists in this project.
+Published materials persist until browser storage is cleared. There is no account,
+database, or cross-device material service. The AI development proxy is stateless.
 
 User: Materials → textual Overview → keyboard/sound Explorer. Users explicitly
 choose a material, even when only Sample is available. There is no automatic
@@ -106,7 +126,10 @@ Stable point IDs are `point-<original mapped index>` within the material revisio
 
 ## Mapping and data semantics
 
-- CSV/XLSX only, single-series bar charts. No image recognition or AI.
+- CSV/XLSX only, single-series bar charts. No image recognition.
+- Blank or repeated headers get distinct display names, and extra data columns
+  remain available. The mapping screen shows each adjustment; source files are
+  never changed.
 - Multi-sheet workbooks require worksheet selection. Source tables remain separate
   from previews and mapped data. No implicit date sorting or grouping.
 - Category and numeric columns must differ, except Count requires no numeric column.
