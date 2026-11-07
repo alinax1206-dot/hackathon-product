@@ -1,1 +1,23 @@
-{"name":"figurewalk","version":"0.1.0","private":true,"type":"module","scripts":{"dev":"vite --host 127.0.0.1","build":"vite build","preview":"vite preview --host 127.0.0.1"},"dependencies":{"papaparse":"^5.5.3","vite":"^7.2.2"}}
+{
+  "name": "figurewalk",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/mapping.test.js",
+    "test:browser": "playwright test",
+    "format": "prettier --write src tests playwright.config.js"
+  },
+  "dependencies": {
+    "papaparse": "^5.5.3",
+    "read-excel-file": "^9.3.14",
+    "vite": "^7.2.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "prettier": "^3.9.10"
+  }
+}
