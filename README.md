@@ -1,4 +1,4 @@
-# FigureWalk
+# ChartAloud
 
 An accessible single-series data explorer: CSV/XLSX → mapping → explicit exploration range → overview and sound. All generated UI and speech are English; uploaded labels are preserved.
 

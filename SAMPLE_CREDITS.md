@@ -1,6 +1,6 @@
 # Instrument recordings
 
-FigureWalk bundles a small set of real, locally served instrument recordings. The browser loads only the instruments used in the current playback.
+ChartAloud bundles a small set of real, locally served instrument recordings. The browser loads only the instruments used in the current playback.
 
 - Grand piano: University of Iowa Electronic Music Studios (Steinway grand, MIS). Source: https://theremin.music.uiowa.edu/MISpiano.html . The source permits use in projects without restrictions, as recorded in the Keyboardia manifest.
 - Acoustic guitar: Discord GM Bank, Martin HD28 Steel String (Jeff Learman), CC0 1.0. Source: https://github.com/sfzinstruments/Discord-SFZ-GM-Bank .

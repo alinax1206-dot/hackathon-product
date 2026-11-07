@@ -141,7 +141,7 @@ function go(step) {
   document.querySelector("h1").focus();
   speak(
     [
-      "Welcome to FigureWalk.",
+      "Welcome to ChartAloud.",
       "Upload a CSV or XLSX file, or try our sample.",
       "Choose your category and value columns.",
       `Explore your data. ${state.data ? rangeDescription(state.data) : ""} Use left and right arrows on the data point controls.`,
@@ -258,7 +258,7 @@ const logo = `<img class="brand-logo" src="/brand/figurewalk-logo-transparent.pn
 const mascot = `<img class="mascot" src="/brand/figurewalk-character-transparent.png" alt="" width="532" height="576">`;
 function render() {
   document.querySelector("#app").innerHTML =
-    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home">${logo}<span class="brand-words"><strong>FigureWalk</strong><small>STUDIO</small></span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><button id="voice" aria-pressed="${state.voice}">◖ <span>Voice guidance ${state.voice ? "on" : "off"}</span></button></div></header><div class="layout"><aside><nav aria-label="Progress"><ol>${steps.map((s, i) => `<li ${i === state.step ? 'aria-current="step"' : ""}><span class="stepnum">${i < state.step ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span></li>`).join("")}</ol></nav><div class="mascot-wrap">${mascot}</div></aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${content()}<footer><span>FigureWalk Studio · Your data stays in this browser.</span></footer></main></div>`;
+    `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home">${logo}<span class="brand-words"><strong>ChartAloud</strong><small>STUDIO</small></span></a><div class="settings"><button id="contrast" aria-pressed="${document.body.classList.contains("contrast")}">◐ <span>High contrast</span></button><button id="voice" aria-pressed="${state.voice}">◖ <span>Voice guidance ${state.voice ? "on" : "off"}</span></button></div></header><div class="layout"><aside><nav aria-label="Progress"><ol>${steps.map((s, i) => `<li ${i === state.step ? 'aria-current="step"' : ""}><span class="stepnum">${i < state.step ? "✓" : String(i + 1).padStart(2, "0")}</span><span>${s}</span></li>`).join("")}</ol></nav><div class="mascot-wrap">${mascot}</div></aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${content()}<footer><span>ChartAloud Studio · Your data stays in this browser.</span></footer></main></div>`;
   document.querySelector("#home").onclick = (e) => {
     e.preventDefault();
     go(0);
