@@ -1,0 +1,26 @@
+{
+  "name": "Grand Piano",
+  "credits": {
+    "source": "University of Iowa Electronic Music Studios (Steinway grand, MIS)",
+    "url": "https://theremin.music.uiowa.edu/MISpiano.html",
+    "license": "Free for any projects, without restrictions"
+  },
+  "samples": [
+    {
+      "note": 53,
+      "file": "F3-mf.mp3"
+    },
+    {
+      "note": 60,
+      "file": "C4-mf.mp3"
+    },
+    {
+      "note": 65,
+      "file": "F4-mf.mp3"
+    },
+    {
+      "note": 72,
+      "file": "C5-mf.mp3"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "Vibraphone",
+  "credits": {
+    "source": "Versilian Community Sample Library (VCSL)",
+    "url": "https://github.com/sgossner/VCSL",
+    "license": "CC0 1.0 Universal (Public Domain)"
+  },
+  "samples": [
+    {
+      "note": 57,
+      "file": "A3-mf.mp3"
+    },
+    {
+      "note": 60,
+      "file": "C4-mf.mp3"
+    },
+    {
+      "note": 67,
+      "file": "G4-mf.mp3"
+    },
+    {
+      "note": 74,
+      "file": "D5-mf.mp3"
+    },
+    {
+      "note": 77,
+      "file": "F5-mf.mp3"
+    }
+  ]
+}

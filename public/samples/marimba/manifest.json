@@ -1,0 +1,30 @@
+{
+  "name": "Marimba",
+  "credits": {
+    "source": "Versilian Community Sample Library (VCSL)",
+    "url": "https://github.com/sgossner/VCSL",
+    "license": "CC0 1.0 Universal (Public Domain)"
+  },
+  "samples": [
+    {
+      "note": 55,
+      "file": "G3-mf.mp3"
+    },
+    {
+      "note": 59,
+      "file": "B3-mf.mp3"
+    },
+    {
+      "note": 65,
+      "file": "F4-mf.mp3"
+    },
+    {
+      "note": 72,
+      "file": "C5-mf.mp3"
+    },
+    {
+      "note": 79,
+      "file": "G5-mf.mp3"
+    }
+  ]
+}

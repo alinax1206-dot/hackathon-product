@@ -1,0 +1,26 @@
+{
+  "name": "Bass Electric",
+  "credits": {
+    "source": "tonejs-instruments (edited from original instrument recordings)",
+    "url": "https://github.com/nbrosowsky/tonejs-instruments",
+    "license": "CC BY 3.0"
+  },
+  "samples": [
+    {
+      "note": 55,
+      "file": "G3.mp3"
+    },
+    {
+      "note": 61,
+      "file": "Cs4.mp3"
+    },
+    {
+      "note": 67,
+      "file": "G4.mp3"
+    },
+    {
+      "note": 73,
+      "file": "Cs5.mp3"
+    }
+  ]
+}

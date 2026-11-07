@@ -1,0 +1,22 @@
+{
+  "name": "Xylophone",
+  "credits": {
+    "source": "tonejs-instruments (edited from original instrument recordings)",
+    "url": "https://github.com/nbrosowsky/tonejs-instruments",
+    "license": "CC BY 3.0"
+  },
+  "samples": [
+    {
+      "note": 67,
+      "file": "G4.mp3"
+    },
+    {
+      "note": 72,
+      "file": "C5.mp3"
+    },
+    {
+      "note": 79,
+      "file": "G5.mp3"
+    }
+  ]
+}

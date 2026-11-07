@@ -1,0 +1,30 @@
+{
+  "name": "Saxophone",
+  "credits": {
+    "source": "tonejs-instruments (edited from original instrument recordings)",
+    "url": "https://github.com/nbrosowsky/tonejs-instruments",
+    "license": "CC BY 3.0"
+  },
+  "samples": [
+    {
+      "note": 60,
+      "file": "C4.mp3"
+    },
+    {
+      "note": 64,
+      "file": "E4.mp3"
+    },
+    {
+      "note": 69,
+      "file": "A4.mp3"
+    },
+    {
+      "note": 72,
+      "file": "C5.mp3"
+    },
+    {
+      "note": 76,
+      "file": "E5.mp3"
+    }
+  ]
+}
