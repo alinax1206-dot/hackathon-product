@@ -1,10 +1,23 @@
 # ChartAloud Studio
 
-A browser-only single-series CSV/XLSX chart learning tool. Creator Mode prepares
+A local-first single-series CSV/XLSX chart learning tool. Creator Mode prepares
 and publishes learning materials; User Mode opens prepared charts without mapping
 or uploading spreadsheets. Generated UI, errors and exact-value speech are English;
 imported labels are preserved. The blue/peach stationery style and supplied brand
 artwork are retained.
+
+On the Explorer screen, the local AI advisor automatically selects a music preset
+and pitch mapping from numeric summary statistics. ChartAloud's recorded-instrument
+engine plays the music after the user presses **Play as music**. The compact sound
+panel appears near the top; **Adjust music** exposes manual choices and an optional
+explanation. The AI does not generate audio or receive raw rows, labels, or files.
+
+A persistent **ChartAloud Guide** is available on every screen. It accepts typed
+questions or English browser speech recognition, waits for three seconds of silence,
+then sends the question. Answers appear in the chat and are spoken automatically
+with an English system voice. The guide can switch modes, open the built-in sample,
+prepare the local-file upload step, control playback, and select/read points. It can
+also answer questions from the currently prepared chart.
 
 ## Run and verify
 
@@ -29,10 +42,26 @@ FIGUREWALK_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 npm run test:browser
 ```
 
+### Local AI setup
+
+Copy `.env.example` to `.env.local`, choose `AI_PROVIDER=tinker` or
+`AI_PROVIDER=gemini`, and enter the matching API key and model. For Tinker, use
+the full sampler checkpoint path in `TINKER_MODEL_PATH`. Restart Vite after
+changing `.env.local`. The Vite development server handles `/api/sound-map` and
+`/api/assistant`; these local endpoints are not included in the static production build.
+
+Without a working AI service, Explorer still plays the standard acoustic sound.
+The uploaded CSV/XLSX stays in the browser. The music advisor sends only computed
+summary statistics. The voice guide sends the user's question plus a validated copy
+of current prepared-chart context (up to 100 label/value points) when a chart answer
+needs AI. It never sends source rows or the spreadsheet binary. API keys stay on the
+server and `.env.local` is ignored by Git.
+
 ## Creator and learner flows
 
 Home provides real Creator Mode and User Mode buttons. There is no global Space
-shortcut and no automatic guidance or playback.
+shortcut and no automatic music/data playback. AI sound selection starts
+automatically when Explorer opens; audio starts only when the user presses Play.
 
 Creator: Import CSV/XLSX → Map → Preview → Publish learning material. Try a sample
 is available inside Import. Title is required; description and learning goal are
@@ -48,8 +77,8 @@ another material begins a separate material with a new ID on publication.
 
 Mode switching and Back to home preserve the current Creator draft in this tab;
 unpublished changes are indicated. Drafts do not survive page reload or tab close.
-Published materials persist until browser storage is cleared. No account, backend,
-database, or cross-device service exists in this project.
+Published materials persist until browser storage is cleared. There is no account,
+database, or cross-device material service. The AI development proxy is stateless.
 
 User: Materials → textual Overview → keyboard/sound Explorer. Users explicitly
 choose a material, even when only Sample is available. There is no automatic
@@ -106,7 +135,10 @@ Stable point IDs are `point-<original mapped index>` within the material revisio
 
 ## Mapping and data semantics
 
-- CSV/XLSX only, single-series bar charts. No image recognition or AI.
+- CSV/XLSX only, single-series bar charts. No image recognition.
+- Blank or repeated headers get distinct display names, and extra data columns
+  remain available. The mapping screen shows each adjustment; source files are
+  never changed.
 - Multi-sheet workbooks require worksheet selection. Source tables remain separate
   from previews and mapped data. No implicit date sorting or grouping.
 - Category and numeric columns must differ, except Count requires no numeric column.
@@ -126,6 +158,14 @@ Stable point IDs are `point-<original mapped index>` within the material revisio
 
 ## Keyboard, speech and audio
 
+The global guide supports typed input and browser `SpeechRecognition`/
+`webkitSpeechRecognition` when available. Voice capture is English (`en-US`) and
+stops after three seconds without a recognition result; Stop ends it immediately.
+Both paths use the same assistant. Browsers do not allow a site to choose an arbitrary
+local file from a spoken filename, so voice can open and focus the import task, but
+the user must confirm the native file picker. Microphone denial and unsupported
+browsers leave the text input fully usable.
+
 Tab reaches native controls. Use Focus exploration area to focus the chart container:
 
 - Left/Right select a point; Home/End select first/last.
@@ -141,16 +181,14 @@ readers can use native buttons when they capture arrow keys. Progress updates ch
 only the selected-point UI and short status, preserving focus.
 
 `src/playback.js` centrally owns oscillator notes, sequence pause/resume, recorded
-music and exact-value speech. Speech cancels music and vice versa. Cancellation
+music, exact-value speech, and assistant-answer speech. Speech cancels music and
+vice versa. Cancellation
 clears timers and invalidates stale asynchronous callbacks. Exact-value speech uses
 `en-US` and an available English voice; unsupported/blocked APIs show English status
-messages. No speech is needed for exploration, playback or the textual overview.
-
-**Audio Guidance is not implemented.** The header is a non-interactive Coming soon
-label. `src/guidance.js` provides an inert event adapter and a stop/cancel boundary;
-it never generates speech/scripts, calls APIs, or automatically plays sound.
-See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for event timing, context
-shape, cancellation requirements, and the read-only future-agent interface.
+messages. Assistant replies have a visible transcript and a Listen again button, so
+speech is never the only output. The existing event-based `src/guidance.js` adapter
+remains inert; the new user-initiated guide is a separate explicit chat interaction.
+See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for that internal event API.
 
 ## Modules and verification
 
@@ -160,12 +198,15 @@ shape, cancellation requirements, and the read-only future-agent interface.
 - `src/main.js`: mode flows and a shared Explorer for Creator/User, focus and keyboard behavior.
 - `src/playback.js`: centralized cancellation and playback; existing recorded engine remains in
   `src/audioEngine.js`, with arrangements/samples/ambience in their existing modules.
+- `src/voiceAssistant.js`: persistent chat, local safe commands, English recognition,
+  three-second silence handling, and assistant requests.
+- `server/ai-assistant.js`: server-only Tinker/Gemini proxy and strict context validation.
 - `src/guidance.js`: deliberately unimplemented integration adapter.
 
 The automated checks cover original import/mapping/range behavior plus immutable
 revision publication, Creator-to-User equality, JSON export/import into an independent
 browser context, invalid input and failed storage recovery, keyboard controls,
-explicit-only speech, cancellation and real Chrome Web Audio. Tests cannot establish
+explicit speech, assistant request validation, cancellation and real Chrome Web Audio. Tests cannot establish
 physical audio quality or full VoiceOver/NVDA behavior. Those require manual listening
 and assistive-technology testing; do not claim accessibility compliance from automation.
 Review screenshots are saved in `artifacts/screenshots/` by the browser suite.
