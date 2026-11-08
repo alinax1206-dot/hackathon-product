@@ -2884,3 +2884,33 @@ h4 {
     padding: 4px 6px;
   }
 }
+
+/* Share the title/chart rows so the learner steps follow wrapped titles too. */
+@media (min-width: 1001px) {
+  .layout.learner-layout:has(.learner-screen):not(:has(.learner-preview-tag)) {
+    grid-template-rows: auto auto auto;
+    row-gap: 0;
+    align-content: start;
+  }
+  .layout.learner-layout:has(.learner-screen):not(:has(.learner-preview-tag)) > aside {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    padding-top: 0;
+  }
+  .layout.learner-layout:has(.learner-screen):not(:has(.learner-preview-tag)) > main {
+    grid-column: 2;
+    grid-row: 1 / 4;
+    display: grid;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+  }
+  .layout.learner-layout:has(.learner-screen):not(:has(.learner-preview-tag)) .learner-screen {
+    grid-row: 1 / 3;
+    display: grid;
+    grid-template-rows: subgrid;
+    row-gap: 0;
+  }
+  .layout.learner-layout:has(.learner-screen):not(:has(.learner-preview-tag)) .learner-workspace {
+    grid-row: 2;
+  }
+}
