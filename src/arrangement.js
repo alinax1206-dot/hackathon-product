@@ -1,3 +1,4 @@
+import { normalizedPitch } from "./soundMapping.js";
 export const MIN_FREQUENCY = 220;
 export const MAX_FREQUENCY = 660;
 export const INSTRUMENTS = {
@@ -61,21 +62,19 @@ export function seriesRange(dataset, key) {
   return { min, max };
 }
 
-export function valueToFrequency(value, range) {
-  if (!Number.isFinite(value) || !Number.isFinite(range?.min) || !Number.isFinite(range?.max) || range.max < range.min) throw new TypeError('Value and range must be finite numbers.');
-  const fraction = range.max === range.min ? 0.5 : (value - range.min) / (range.max - range.min);
-  return MIN_FREQUENCY + Math.max(0, Math.min(1, fraction)) * (MAX_FREQUENCY - MIN_FREQUENCY);
+export function valueToFrequency(value, range, mapping = 'linear') {
+  return MIN_FREQUENCY + normalizedPitch(value, range, mapping) * (MAX_FREQUENCY - MIN_FREQUENCY);
 }
 
-function noteFor(value, range, playback, style) {
-  const frequency = valueToFrequency(value, range);
+function noteFor(value, range, playback, style, mapping) {
+  const frequency = valueToFrequency(value, range, mapping);
   if (playback === 'points') return frequency;
   const scale = STYLES[style].scale;
   const fraction = (frequency - MIN_FREQUENCY) / (MAX_FREQUENCY - MIN_FREQUENCY);
   return midiToFrequency(scale[Math.round(fraction * (scale.length - 1))]);
 }
 
-export function buildArrangement(dataset, { order = 'category', playback = 'points', style = 'acoustic', instruments = {} } = {}) {
+export function buildArrangement(dataset, { order = 'category', playback = 'points', style = 'acoustic', instruments = {}, mapping = 'linear' } = {}) {
   validateDataset(dataset);
   if (!ORDERS.includes(order)) throw new RangeError('Unknown playback order.');
   if (!PLAYBACKS.includes(playback)) throw new RangeError('Unknown playback mode.');
@@ -95,7 +94,7 @@ export function buildArrangement(dataset, { order = 'category', playback = 'poin
   const beat = 60000 / preset.bpm;
   const notesFor = (rowIndex, seriesIndex) => {
     const item = series[seriesIndex];
-    return { frequency: noteFor(dataset.data[rowIndex].values[item.key], ranges[item.key], playback, style),
+    return { frequency: noteFor(dataset.data[rowIndex].values[item.key], ranges[item.key], playback, style, mapping),
       instrument: item.instrument, key: item.key, value: dataset.data[rowIndex].values[item.key], level: 1 };
   };
   const steps = [];

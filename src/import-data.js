@@ -31,27 +31,32 @@ export async function parseFile(file) {
 export function prepareTable(table) {
   if (!table.length)
     throw new Error("This worksheet is empty. Choose another worksheet.");
-  const fields = table[0].map((v) => (v == null ? "" : String(v)));
-  if (
-    !fields.length ||
-    fields.some((f) => !f.trim()) ||
-    new Set(fields).size !== fields.length
-  ) {
-    throw new Error(
-      "Column headers must be non-empty and unique. Fix the source table or choose another worksheet.",
-    );
-  }
-  const rows = table.slice(1).map((cells, i) => {
-    if (
-      cells.length > fields.length &&
-      cells.slice(fields.length).some((v) => v != null && v !== "")
-    ) {
-      throw new Error(`Row ${i + 2}: more cells than column headers.`);
+  const width = table.reduce((max, cells) => Math.max(max, cells.length), 0);
+  if (!width) throw new Error("This worksheet has no columns.");
+  const sourceHeaders = Array.from({ length: width }, (_, i) =>
+    String(table[0][i] ?? "").trim(),
+  );
+  const reserved = new Set(sourceHeaders.filter(Boolean).map((name) => name.toLowerCase()));
+  const used = new Set();
+  const headerAdjustments = [];
+  const fields = sourceHeaders.map((original, i) => {
+    const base = original || `Column ${i + 1}`;
+    let name = base;
+    let suffix = 2;
+    while (used.has(name.toLowerCase()) || (name !== original && reserved.has(name.toLowerCase()))) {
+      name = `${base} (${suffix++})`;
     }
+    used.add(name.toLowerCase());
+    if (name !== original) {
+      headerAdjustments.push({ column: i + 1, original, name });
+    }
+    return name;
+  });
+  const rows = table.slice(1).map((cells, i) => {
     return Object.fromEntries(
       fields.map((field, j) => [field, cells[j] ?? null]),
     );
   });
   if (!rows.length) throw new Error("This worksheet has no data rows.");
-  return { fields, rows };
+  return { fields, rows, headerAdjustments };
 }

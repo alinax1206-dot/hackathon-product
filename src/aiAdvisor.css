@@ -1,0 +1,31 @@
+.ai-advisor {
+  min-height: 0;
+  margin: 0 0 12px;
+  padding: 14px 18px;
+  background: #fffdfb;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+.ai-advisor .ai-primary { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.ai-advisor h2 { margin: 0; font-size: 1.2rem; }
+.ai-advisor .ai-status { margin: 4px 0 0; font-size: .9rem; font-weight: 700; }
+.ai-advisor #play-music { flex: none; }
+.ai-advisor .ai-settings { margin-top: 9px; font-size: .85rem; }
+.ai-advisor .ai-settings > summary,
+.ai-advisor .ai-details > summary { cursor: pointer; font-weight: 700; }
+.ai-advisor .ai-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ai-advisor .ai-controls label { display: grid; gap: 3px; font-size: .82rem; font-weight: 700; }
+.ai-advisor .ai-controls select,
+.ai-advisor .ai-controls button { min-height: 40px; padding: 7px 10px; font-size: .86rem; }
+.ai-advisor .ai-controls select { min-width: 185px; }
+.ai-advisor .ai-details { margin-top: 9px; }
+.ai-advisor .ai-details p { margin: 5px 0; }
+.ai-advisor .ai-privacy { margin: 8px 0 0; font-size: .75rem; color: #335b78; }
+body.contrast .ai-advisor .ai-privacy { color: var(--ink); }
+@media (max-width: 650px) {
+  .ai-advisor { padding: 10px 12px; }
+  .ai-advisor .ai-primary { align-items: stretch; flex-direction: column; gap: 8px; }
+  .ai-advisor #play-music { width: 100%; }
+  .ai-advisor .ai-controls label { flex: 1 1 180px; }
+  .ai-advisor .ai-controls select { min-width: 0; max-width: 100%; }
+}

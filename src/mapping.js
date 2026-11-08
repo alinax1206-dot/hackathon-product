@@ -94,7 +94,7 @@ export function mapColumns(
       .filter(([, values]) => values.length > 1)
       .map(([label]) => label);
     throw new Error(
-      `Repeated categories: ${duplicates.join(", ")}. Do not aggregate requires one record per category. Choose Sum, Average, or Count to continue.`,
+      `Repeated categories (${duplicates.length}; for example, ${duplicates.slice(0, 3).join(", ")}). Choose Sum, Average, or Count to continue.`,
     );
   }
   const data =
