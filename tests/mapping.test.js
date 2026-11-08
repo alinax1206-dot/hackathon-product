@@ -25,7 +25,17 @@ test("CSV preserves labels, zero, negative numbers and original table", () => {
     { label: "B", value: -4 },
   ]);
   assert.deepEqual(original, copy);
-  assert.throws(() => prepareTable(parseCSV("a,a\n1,2")), /headers/);
+  assert.deepEqual(prepareTable(parseCSV("a,a\n1,2")).fields, ["a", "a (2)"]);
+});
+test("blank, repeated and short headers import without discarding values", () => {
+  const original = parseCSV(",Date,Date,Column 1\n0,2015-12-27,2015-12-20,Albany,42\n1,2015-12-19,2015-12-18,Boston,55\n");
+  const snapshot = structuredClone(original);
+  const result = prepareTable(original);
+  assert.deepEqual(result.fields, ["Column 1 (2)", "Date", "Date (2)", "Column 1", "Column 5"]);
+  assert.equal(result.rows[0]["Column 5"], "42");
+  assert.equal(result.rows[1]["Date (2)"], "2015-12-18");
+  assert.equal(result.headerAdjustments.length, 3);
+  assert.deepEqual(original, snapshot);
 });
 test("duplicates require explicit aggregation; stable sum, mean and count", () => {
   const { rows } = prepareTable(table);

@@ -1,13 +1,17 @@
-# Audio Guidance integration (not implemented)
+# Event-driven Audio Guidance integration (not implemented)
+
+This document describes the internal event adapter only. The product now also has a
+separate, user-initiated global voice/text guide in `src/voiceAssistant.js`. That
+guide does not automatically react to the events below.
 
 `src/guidance.js` exports `createGuidanceAdapter({ cancelPlayback })`. Its current
 `implemented` flag is `false`; `emit` and `cancel` are no-ops. It has no network,
-script generation, SpeechSynthesis, timers, or automatic sound. The UI displays
-non-interactive “Audio guidance · Coming soon”. There is no homepage Space handler.
+script generation, SpeechSynthesis, timers, or automatic sound. There is no homepage
+Space handler.
 
 A future teammate can replace the adapter internals without changing the Explorer.
-Do not connect guidance to `Playback.speak` implicitly: that method currently serves
-explicit exact-value reading only. Future welcome messages and instructions belong
+Do not connect guidance to `Playback.speak` implicitly: that method serves explicit
+exact-value reading and user-requested assistant answers. Future automatic welcome messages and instructions belong
 to the guidance implementation, not render functions.
 
 ## Events
@@ -28,15 +32,15 @@ No source worksheet or full dataset is sent by these events. Draft previews have
 no published material identity. Point IDs are stable within a material revision
 and refer to its selected range in original mapped order.
 
-| Event | Timing |
-| --- | --- |
-| `modeEntered` | After the selected mode renders and its title receives focus. |
-| `materialOpened` | After a validated snapshot becomes the current dataset, old playback stops, and title receives focus. |
-| `overviewRequested` | After the learner explicitly presses Show overview; the visible overview receives focus. |
-| `pointSelected` | On explicit point selection and sequence progress; UI updates without rebuilding the Explorer. |
-| `playbackChanged` | When the central playback controller updates a short status. |
-| `errorOccurred` | On playback errors, failed publication, or material import errors. Errors remain visible in English. |
-| `contextExited` | When leaving an Explorer, opening/replacing a material, or returning home. |
+| Event               | Timing                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| `modeEntered`       | After the selected mode renders and its title receives focus.                                         |
+| `materialOpened`    | After a validated snapshot becomes the current dataset, old playback stops, and title receives focus. |
+| `overviewRequested` | After the learner explicitly presses Show overview; the visible overview receives focus.              |
+| `pointSelected`     | On explicit point selection and sequence progress; UI updates without rebuilding the Explorer.        |
+| `playbackChanged`   | When the central playback controller updates a short status.                                          |
+| `errorOccurred`     | On playback errors, failed publication, or material import errors. Errors remain visible in English.  |
+| `contextExited`     | When leaving an Explorer, opening/replacing a material, or returning home.                            |
 
 `stopAll()` also calls `adapter.cancel()` on navigation, data changes, point changes,
 and new playback. Future guidance should use generation tokens or equivalent
@@ -58,4 +62,4 @@ mode, current User material (or null), selected point with stable point ID, and
 computed `{ hi, lo, count }`. Mutating the copy cannot change application state.
 Only this explicit pull interface contains the active material; events do not
 send it anywhere. Facts come from the same selected dataset that the Explorer and
-playback consume. There is no AI/chat integration.
+playback consume. The guidance adapter does not call the separate AI sound advisor.

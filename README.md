@@ -1,10 +1,25 @@
 # ChartAloud Studio
 
-A browser-only single-series CSV/XLSX chart learning tool. Creator Mode prepares
+A local-first single-series CSV/XLSX chart learning tool. Creator Mode prepares
 and publishes learning materials; User Mode opens prepared charts without mapping
 or uploading spreadsheets. Generated UI, errors and exact-value speech are English;
 imported labels are preserved. The blue/peach stationery style and supplied brand
 artwork are retained.
+
+Creator Preview uses Tinker to recommend a music style and pitch mapping from
+numeric summary statistics. **Play as music** plays the selected arrangement.
+**Adjust music** allows a personal choice; **Use AI suggestion** appears only
+when the current choice differs. **How is the sound chosen?** explains the
+mapping. Individual point cues are short notes, rather than the full arrangement.
+The AI does not generate audio or receive raw rows, labels, or files.
+
+The floating animated music note opens the ChartAloud Guide on every screen.
+It accepts typed questions or English browser speech recognition and answers
+through Tinker. Home, User Mode, and opened lessons offer short English spoken
+greetings, subject to the browser's autoplay rules. There is no automatic long
+data summary; a learner can ask for the overview when ready.
+Replies may be spoken with the browser's installed voice. No voice package or
+voice picker is included.
 
 ## Run and verify
 
@@ -20,7 +35,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Open the local URL printed by Vite. Browser tests normally use port 5188.
+Open the local URL printed by Vite. Browser tests normally use port 5191.
 `FIGUREWALK_TEST_URL` can target an existing server. For installed macOS Chrome:
 
 ```sh
@@ -29,51 +44,67 @@ FIGUREWALK_CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Ch
 npm run test:browser
 ```
 
+### Local AI setup
+
+Copy `.env.example` to `.env.local`, then set `TINKER_API_KEY` and the full
+sampler checkpoint path in `TINKER_MODEL_PATH`. Both AI features use Tinker.
+Restart Vite after
+changing `.env.local`. The Vite development server handles `/api/sound-map` and
+`/api/assistant`; these local endpoints are not included in the static production build.
+
+Without a working AI service, Explorer still plays the standard acoustic sound.
+The uploaded CSV/XLSX stays in the browser. The music advisor sends only computed
+summary statistics. The voice guide sends the user's question plus a validated copy
+of current prepared-chart context (up to 100 label/value points) when a chart answer
+needs AI. It never sends source rows or the spreadsheet binary. API keys stay on the
+server and `.env.local` is ignored by Git.
+
 ## Creator and learner flows
 
-Home provides real Creator Mode and User Mode buttons. There is no global Space
-shortcut and no automatic guidance or playback.
+Home provides Creator Mode and User Mode, with the headline
+“Data Shouldn't Have to Be Seen to Be Understood.” There is no automatic
+music or data playback.
 
-Creator: Import CSV/XLSX → Map → Preview → Publish learning material. Try a sample
-is available inside Import. Title is required; description and learning goal are
-optional. Preview and Preview as learner share the exact same Explorer used in
-User Mode. Review displays the actual metric, axes, unit, aggregation, point count,
-range, and calculated extrema. A partial selection is always marked partial data.
+Creator: **01 Import → 02 Map → 03 Preview → 04 Publish → 05 Code**.
+The enlarged step list remains beside the content and is clickable when a step
+is available. CSV/XLSX format is detected automatically; Excel workbooks with
+multiple worksheets still let the Creator choose a worksheet. Import CSV/XLSX, map
+columns, unit and required repeated-category aggregation, preview the chart,
+and choose a range when there are more than 100 points. A title is required;
+a learning goal is optional. **Preview as learner** uses the same chart layout
+as the real learner Explore screen. Two demonstration CSV files are in
+`public/demo/`; they are not published automatically.
 
-Publish validates and writes an independent immutable snapshot. Success is shown
-only after the write succeeds. Subsequent edits do not change earlier revisions;
-republishing retains the material ID and increments revision. The library retains
-all revisions, with explicit open buttons. After successful publication, Start
-another material begins a separate material with a new ID on publication.
+Only successful publication saves an independent revision and creates a
+six-digit code. The code appears on the separate Code page. Republishing keeps
+the material ID, increments the revision, and creates a new code. The Code
+page's **Open User Mode** directly opens the newly published material.
 
-Mode switching and Back to home preserve the current Creator draft in this tab;
-unpublished changes are indicated. Drafts do not survive page reload or tab close.
-Published materials persist until browser storage is cleared. No account, backend,
-database, or cross-device service exists in this project.
+User Mode accepts a six-digit code, or resumes the most recently opened material
+in the same tab. An invalid code stays on the form. The learner Overview is a
+brief invitation; the learner can ask the floating guide for the spoken data
+summary. Explore presents a large chart without extra point or playback panels.
+Arrow keys select points, Enter reads a value, Space starts voice input, and
+Escape stops audio. The recent code is kept in session storage and restored
+from the browser's published-material library on reload.
 
-User: Materials → textual Overview → keyboard/sound Explorer. Users explicitly
-choose a material, even when only Sample is available. There is no automatic
-sequence or speech. Opening a material stops all previous playback and focuses its
-title. Overview includes axes, unit, selected count, highest/lowest values,
-aggregation and range. Sample and JSON import remain available in an empty library.
+Returning home preserves the current Creator draft in this tab. **Continue
+draft** restores its step, imported table and edits. Drafts do not survive
+page reload or tab close. Published revisions and codes persist in local browser
+storage. There is no account login, database or cross-device code service.
+
+**Material Archive** in the header lists every published revision and its
+locally saved class code. It can reopen a revision in Creator or User Mode.
+Replacing an upload or opening a different revision parks the current draft in
+the Archive for this tab. Archived published materials persist after reload;
+parked drafts do not. The supplied logo artwork is paired with Black Ops One,
+News Cycle, and Poppins from Google Fonts, with local fallbacks offline.
 
 ## Storage and JSON handoff
 
-**Saved in this browser** means this browser profile and this origin, including its
-port. Materials are not automatically visible on other devices or another port.
-The local library uses `localStorage` under `chartaloud.materials.v1`; published
-snapshots contain at most 100 selected points, so no spreadsheet binaries need to
-be stored. Storage failure or corruption is reported without overwriting existing
-storage or discarding the Creator draft. Retry or export JSON to preserve work.
+**Saved in this browser** means this browser profile and this origin, including its port. Codes are stored under `chartaloud.classroom.v1`; material revisions are stored under `chartaloud.materials.v1`. A code made here will not work in another browser or on another device. Exporting a published JSON snapshot can transfer the material data, but the current User Mode is code-gated and has no JSON import screen. A teammate can reopen the JSON in a future import workflow or use the same browser for this demo. The snapshots contain at most 100 selected points, not spreadsheet binaries. Storage failure is reported without showing a success code or discarding the Creator draft.
 
-Export published JSON to transfer an actual saved revision. Export draft as
-material JSON produces a validated transferable snapshot without claiming it was
-published locally. User imports JSON and immediately opens the prepared dataset,
-without column mapping. If saving is blocked/full, a valid import can still open
-for the current session with an explicit error; keep the original JSON and retry
-from Materials. Invalid JSON, unsupported versions, inconsistent counts/ranges,
-invalid values, oversized files, and conflicting ID/revision content are rejected.
-Repeated identical imports are idempotent. There are no share links.
+Use **Export published JSON** on the Creator Code page to download the saved revision. No real share links are generated.
 
 ```json
 {
@@ -106,7 +137,10 @@ Stable point IDs are `point-<original mapped index>` within the material revisio
 
 ## Mapping and data semantics
 
-- CSV/XLSX only, single-series bar charts. No image recognition or AI.
+- CSV/XLSX only, single-series bar charts. No image recognition.
+- Blank or repeated headers get distinct display names, and extra data columns
+  remain available. The mapping screen shows each adjustment; source files are
+  never changed.
 - Multi-sheet workbooks require worksheet selection. Source tables remain separate
   from previews and mapped data. No implicit date sorting or grouping.
 - Category and numeric columns must differ, except Count requires no numeric column.
@@ -119,38 +153,44 @@ Stable point IDs are `point-<original mapped index>` within the material revisio
   fields, but every field remains manually selectable.
 - Decimal places (0–10, default 2) controls displayed and spoken values, not raw
   data, aggregation, extrema or pitch. Count always uses whole numbers.
-- More than 100 mapped points require an explicit continuous inclusive range of
+- More than 100 mapped points initially show the first 100; Preview can select a continuous inclusive range of
   1–100 points. No silent truncation. Chart, overview, statistics and audio use
   exactly that range. Partial data never claims to represent the full table.
 - Changing mapping or ranges stops all old audio and clears derived results.
 
 ## Keyboard, speech and audio
 
-Tab reaches native controls. Use Focus exploration area to focus the chart container:
+The global guide supports typed input and browser `SpeechRecognition`/
+`webkitSpeechRecognition` when available. Voice capture is English (`en-US`) and
+stops after three seconds without a recognition result; Stop ends it immediately.
+Both paths use the same assistant. Browsers do not allow a site to choose an arbitrary
+local file from a spoken filename, so voice can open and focus the import task, but
+the user must confirm the native file picker. Microphone denial and unsupported
+browsers leave the text input fully usable.
+
+Tab reaches native controls. Focus the chart to use its shortcuts:
 
 - Left/Right select a point; Home/End select first/last.
 - Enter explicitly reads the current label, displayed numeric value and unit.
 - R plays the current pitch; a checkbox can disable this single-letter shortcut.
-- Space plays/pauses the sequence only when the exploration container itself has focus.
+- In Creator Preview, Space plays or pauses the music when the chart has focus.
+- In User Explore and learner preview, Space starts voice input for the guide.
 - Escape stops application audio and value reading without navigation.
 
-Every action has an equivalent button. Point buttons select points using native
-click/Enter/Space; shortcuts do not override controls, links, forms, contenteditable,
+Point buttons select points using native click/Enter/Space; shortcuts do not override controls, links, forms, contenteditable,
 modifier combinations or repeated keydown. No `role="application"` is used. Screen
 readers can use native buttons when they capture arrow keys. Progress updates change
 only the selected-point UI and short status, preserving focus.
 
 `src/playback.js` centrally owns oscillator notes, sequence pause/resume, recorded
-music and exact-value speech. Speech cancels music and vice versa. Cancellation
+music, exact-value speech, and assistant-answer speech. Speech cancels music and
+vice versa. Cancellation
 clears timers and invalidates stale asynchronous callbacks. Exact-value speech uses
-`en-US` and an available English voice; unsupported/blocked APIs show English status
-messages. No speech is needed for exploration, playback or the textual overview.
-
-**Audio Guidance is not implemented.** The header is a non-interactive Coming soon
-label. `src/guidance.js` provides an inert event adapter and a stop/cancel boundary;
-it never generates speech/scripts, calls APIs, or automatically plays sound.
-See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for event timing, context
-shape, cancellation requirements, and the read-only future-agent interface.
+an available English voice with the browser’s available voice; unsupported/blocked APIs show English status
+messages. Assistant replies have a visible transcript, so
+speech is never the only output. The existing event-based `src/guidance.js` adapter
+remains inert; the new user-initiated guide is a separate explicit chat interaction.
+See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for that internal event API.
 
 ## Modules and verification
 
@@ -160,12 +200,15 @@ shape, cancellation requirements, and the read-only future-agent interface.
 - `src/main.js`: mode flows and a shared Explorer for Creator/User, focus and keyboard behavior.
 - `src/playback.js`: centralized cancellation and playback; existing recorded engine remains in
   `src/audioEngine.js`, with arrangements/samples/ambience in their existing modules.
+- `src/voiceAssistant.js`: persistent chat, local safe commands, English recognition,
+  three-second silence handling, and assistant requests.
+- `server/ai-assistant.js`: server-only Tinker proxy and strict context validation.
 - `src/guidance.js`: deliberately unimplemented integration adapter.
 
 The automated checks cover original import/mapping/range behavior plus immutable
 revision publication, Creator-to-User equality, JSON export/import into an independent
 browser context, invalid input and failed storage recovery, keyboard controls,
-explicit-only speech, cancellation and real Chrome Web Audio. Tests cannot establish
+explicit speech, assistant request validation, cancellation and real Chrome Web Audio. Tests cannot establish
 physical audio quality or full VoiceOver/NVDA behavior. Those require manual listening
 and assistive-technology testing; do not claim accessibility compliance from automation.
 Review screenshots are saved in `artifacts/screenshots/` by the browser suite.

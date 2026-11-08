@@ -1,16 +1,55 @@
 import { AudioEngine } from "./audioEngine.js";
-// One owner for speech, oscillator notes, recorded music, and cancellation tokens.
+import { normalizedPitch } from "./soundMapping.js";
+const PREFERRED_VOICES = [
+  "Samantha",
+  "Ava",
+  "Allison",
+  "Susan",
+  "Nicky",
+  "Victoria",
+  "Microsoft Aria",
+  "Microsoft Jenny",
+  "Google US English",
+  "Karen",
+  "Moira",
+  "Tessa",
+  "Serena",
+];
+
+export function chooseGuideVoice(voices, selectedName = "") {
+  const english = voices.filter((voice) => /^en[-_]/i.test(voice.lang));
+  if (selectedName) {
+    const selected = english.find((voice) => voice.name === selectedName);
+    if (selected) return selected;
+  }
+  for (const name of PREFERRED_VOICES) {
+    const match = english.find((voice) =>
+      voice.name.toLowerCase().startsWith(name.toLowerCase()),
+    );
+    if (match) return match;
+  }
+  return english.find((voice) => voice.default) ?? english[0] ?? null;
+}
+// One owner for speech, point cues, recorded music, and cancellation tokens.
 export class Playback {
   constructor({ onPoint, onStatus, onError }) {
     Object.assign(this, { onPoint, onStatus, onError });
     this.generation = 0;
+    this.mapping = "linear";
     this.nodes = new Set();
     this.status = "stopped";
     this.index = 0;
     this.playedDatasets = new WeakSet();
+    try {
+      this.voiceName = localStorage.getItem("chartaloud.guideVoice") || "";
+    } catch {
+      this.voiceName = "";
+    }
     this.engine = new AudioEngine({
       onStateChange: ({ status, rowIndex }) => {
         if (this.kind !== "music") return;
+        if (status === "playing" && this.dataset)
+          this.playedDatasets.add(this.dataset);
         this.onStatus(
           status === "loading"
             ? "Loading instrument recordings…"
@@ -24,10 +63,26 @@ export class Playback {
       },
     });
   }
+  availableVoices() {
+    return (
+      globalThis.speechSynthesis
+        ?.getVoices()
+        .filter((voice) => /^en[-_]/i.test(voice.lang)) ?? []
+    );
+  }
+  setVoice(name) {
+    this.voiceName = name;
+    try {
+      localStorage.setItem("chartaloud.guideVoice", name);
+    } catch {}
+  }
+  get selectedVoice() {
+    return chooseGuideVoice(this.availableVoices(), this.voiceName);
+  }
   dataLabel(dataset) {
     return dataset && this.playedDatasets.has(dataset)
-      ? "Replay data"
-      : "Play data";
+      ? "Replay chart music"
+      : "Play chart music";
   }
   get pauseLabel() {
     return (this.kind === "sequence" && this.status === "paused") ||
@@ -70,30 +125,49 @@ export class Playback {
     globalThis.speechSynthesis?.cancel();
     this.onStatus("Ready to play.");
   }
-  speak(text, enabled) {
+  speak(
+    text,
+    enabled,
+    {
+      status = "Reading exact value.",
+      retryMessage = "Speech could not start. Try again or read the visible value.",
+      onEnd = () => {},
+    } = {},
+  ) {
     this.stop();
-    if (!enabled) return;
+    if (!enabled) {
+      onEnd();
+      return;
+    }
     if (!globalThis.speechSynthesis || !globalThis.SpeechSynthesisUtterance) {
       this.onError(
         "Spoken values are unavailable in this browser. All instructions and values are available on screen.",
       );
+      onEnd();
+      return;
+    }
+    const installedVoices = speechSynthesis.getVoices?.() ?? [];
+    const englishVoice = this.selectedVoice;
+    if (installedVoices.length > 0 && !englishVoice) {
+      this.onError("No English voice is installed. The answer is available as text.");
+      onEnd();
       return;
     }
     try {
       const token = this.generation;
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = "en-US";
-      utterance.voice =
-        speechSynthesis.getVoices().find((v) => /^en[-_]/i.test(v.lang)) ??
-        null;
+      utterance.voice = englishVoice;
+      if (utterance.voice) utterance.lang = utterance.voice.lang;
+      utterance.pitch = 1;
+      utterance.rate = 0.96;
       utterance.onerror = (e) => {
         if (
           token === this.generation &&
           !["canceled", "interrupted"].includes(e.error)
         )
-          this.onError(
-            "Speech could not start. Press Read exact value to retry, or read the visible value.",
-          );
+          this.onError(retryMessage);
+        onEnd();
       };
       this.kind = "speech";
       this.status = "speaking";
@@ -102,14 +176,16 @@ export class Playback {
           this.kind = null;
           this.status = "stopped";
           this.onStatus("Ready to play.");
+          onEnd();
         }
       };
-      this.onStatus("Reading exact value.");
+      this.onStatus(status);
       speechSynthesis.speak(utterance);
     } catch {
       this.onError(
         "Speech is unavailable. Use the visible instructions and values.",
       );
+      onEnd();
     }
   }
   async note(value, dataset, token = this.generation) {
@@ -126,11 +202,7 @@ export class Playback {
       const values = dataset.data.map((p) => p.value),
         min = Math.min(...values),
         max = Math.max(...values);
-      const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
-      const pitch =
-        max === min
-          ? 0.5
-          : (value / scale - min / scale) / (max / scale - min / scale);
+      const pitch = normalizedPitch(value, { min, max }, this.mapping);
       const osc = this.context.createOscillator(),
         gain = this.context.createGain(),
         at = this.context.currentTime;
@@ -182,7 +254,7 @@ export class Playback {
       }
     }, 800);
   }
-  toggle(dataset) {
+  toggle(dataset, style = this.currentStyle ?? "acoustic") {
     if (this.kind === "music") {
       if (this.engine.status === "paused")
         this.engine.resume().catch((e) => this.onError(e.message));
@@ -203,10 +275,12 @@ export class Playback {
     } else if (this.status === "paused") {
       this.status = "playing";
       this.tick();
-    } else this.sequence(dataset);
+    } else this.music(dataset, style);
   }
   music(dataset, style) {
     this.stop();
+    this.currentStyle = style;
+    this.dataset = dataset;
     this.kind = "music";
     const token = this.generation;
     this.engine
@@ -220,7 +294,7 @@ export class Playback {
             values: { [dataset.yAxis]: p.value },
           })),
         },
-        { playback: "music", style },
+        { playback: "music", style, mapping: this.mapping },
       )
       .catch((e) => {
         if (token === this.generation) this.onError(e.message);
