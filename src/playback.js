@@ -39,6 +39,8 @@ export class Playback {
     this.nodes = new Set();
     this.status = "stopped";
     this.index = 0;
+    this.speechPreloadPromise = null;
+    this.speechReady = false;
     this.playedDatasets = new WeakSet();
     try {
       this.voiceName = localStorage.getItem("chartaloud.guideVoice") || "";
@@ -125,6 +127,91 @@ export class Playback {
     globalThis.speechSynthesis?.cancel();
     this.onStatus("Ready to play.");
   }
+  preloadSpeech({ reportProgress = true } = {}) {
+    if (this.speechReady) return Promise.resolve();
+    if (this.speechPreloadPromise) return this.speechPreloadPromise;
+    const token = this.generation;
+    if (reportProgress)
+      this.onStatus(
+        "Preparing the local English voice. Its first download is about 100 MB.",
+      );
+    this.speechPreloadPromise = import("./kokoroSpeech.js")
+      .then(({ preloadSpeech }) =>
+        preloadSpeech((message) => {
+          if (reportProgress && token === this.generation)
+            this.onStatus(message);
+        }),
+      )
+      .then(() => {
+        this.speechReady = true;
+        if (reportProgress && token === this.generation)
+          this.onStatus("Local English voice ready.");
+      })
+      .catch((error) => {
+        if (token !== this.generation) return;
+        const reason =
+          error instanceof Error ? error.message : "unknown load error";
+        this.onError(
+          `The local English voice could not be prepared: ${reason}. Speech will try the browser voice when requested.`,
+        );
+        if (reportProgress)
+          this.onStatus(`Browser English voice fallback: ${reason}`);
+      })
+      .finally(() => {
+        this.speechPreloadPromise = null;
+      });
+    return this.speechPreloadPromise;
+  }
+  speakWithBrowser(text, retryMessage, onEnd, token) {
+    if (token !== this.generation) return;
+    const Speech = globalThis.SpeechSynthesisUtterance;
+    if (!globalThis.speechSynthesis || !Speech) {
+      this.kind = null;
+      this.status = "stopped";
+      const message = `${retryMessage} Spoken guidance is unavailable; the text remains on screen.`;
+      this.onError(message);
+      this.onStatus(message);
+      onEnd();
+      return;
+    }
+    try {
+      const utterance = new Speech(text);
+      const englishVoice = this.selectedVoice;
+      utterance.lang = "en-US";
+      utterance.voice = englishVoice;
+      if (utterance.voice) utterance.lang = utterance.voice.lang;
+      utterance.pitch = 1;
+      utterance.rate = 0.96;
+      const finish = (message = "Ready to play.") => {
+        if (token !== this.generation) return;
+        this.kind = null;
+        this.status = "stopped";
+        this.onStatus(message);
+        onEnd();
+      };
+      utterance.onerror = (event) => {
+        const failed =
+          token === this.generation &&
+          !["canceled", "interrupted"].includes(event.error);
+        if (failed) {
+          this.onError(retryMessage);
+          finish(retryMessage);
+        } else finish();
+      };
+      utterance.onend = finish;
+      this.kind = "speech";
+      this.status = "speaking";
+      this.onStatus("Speaking with your browser's English voice.");
+      globalThis.speechSynthesis.speak(utterance);
+    } catch {
+      if (token !== this.generation) return;
+      this.kind = null;
+      this.status = "stopped";
+      this.onError(retryMessage);
+      this.onStatus(retryMessage);
+      onEnd();
+    }
+  }
   speak(
     text,
     enabled,
@@ -132,6 +219,7 @@ export class Playback {
       status = "Reading exact value.",
       retryMessage = "Speech could not start. Try again or read the visible value.",
       onEnd = () => {},
+      bundledVoice = false,
     } = {},
   ) {
     this.stop();
@@ -139,54 +227,85 @@ export class Playback {
       onEnd();
       return;
     }
-    if (!globalThis.speechSynthesis || !globalThis.SpeechSynthesisUtterance) {
-      this.onError(
-        "Spoken values are unavailable in this browser. All instructions and values are available on screen.",
+    const token = this.generation;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      onEnd();
+    };
+    this.kind = "speech";
+    this.status = "loading";
+    if (!bundledVoice) {
+      this.speakWithBrowser(text, retryMessage, finish, token);
+      return;
+    }
+    if (!this.speechReady) {
+      void this.preloadSpeech({ reportProgress: false });
+      this.onStatus(
+        "Speaking with your browser's English voice while the local voice prepares.",
       );
-      onEnd();
+      this.speakWithBrowser(text, retryMessage, finish, token);
       return;
     }
-    const installedVoices = speechSynthesis.getVoices?.() ?? [];
-    const englishVoice = this.selectedVoice;
-    if (installedVoices.length > 0 && !englishVoice) {
-      this.onError("No English voice is installed. The answer is available as text.");
-      onEnd();
-      return;
-    }
-    try {
-      const token = this.generation;
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "en-US";
-      utterance.voice = englishVoice;
-      if (utterance.voice) utterance.lang = utterance.voice.lang;
-      utterance.pitch = 1;
-      utterance.rate = 0.96;
-      utterance.onerror = (e) => {
-        if (
-          token === this.generation &&
-          !["canceled", "interrupted"].includes(e.error)
-        )
-          this.onError(retryMessage);
-        onEnd();
-      };
-      this.kind = "speech";
-      this.status = "speaking";
-      utterance.onend = () => {
-        if (token === this.generation) {
-          this.kind = null;
-          this.status = "stopped";
-          this.onStatus("Ready to play.");
-          onEnd();
+    this.onStatus("Loading packaged English voice…");
+    import("./kokoroSpeech.js")
+      .then(({ synthesizeSpeech }) =>
+        synthesizeSpeech(text, (message) => {
+          if (token === this.generation) this.onStatus(message);
+        }),
+      )
+      .then(async ({ samples, sampleRate }) => {
+        if (token !== this.generation) return;
+        try {
+          const Constructor =
+            globalThis.AudioContext || globalThis.webkitAudioContext;
+          if (!Constructor)
+            throw new Error("This browser does not support Web Audio.");
+          this.context ??= new Constructor();
+          await this.context.resume();
+          if (token !== this.generation) return;
+          if (this.context.state && this.context.state !== "running")
+            throw new Error("Audio is blocked by the browser.");
+          const buffer = this.context.createBuffer(
+            1,
+            samples.length,
+            sampleRate,
+          );
+          buffer.copyToChannel(samples, 0);
+          const source = this.context.createBufferSource();
+          source.buffer = buffer;
+          source.connect(this.context.destination);
+          source.onended = () => {
+            source.disconnect();
+            this.nodes.delete(source);
+            if (token !== this.generation) return;
+            this.kind = null;
+            this.status = "stopped";
+            this.onStatus("Ready to play.");
+            finish();
+          };
+          this.nodes.add(source);
+          this.status = "speaking";
+          this.onStatus(status);
+          source.start();
+        } catch {
+          if (token !== this.generation) return;
+          this.onError(
+            "The bundled voice could not start; using your browser's English voice instead.",
+          );
+          this.speakWithBrowser(text, retryMessage, finish, token);
         }
-      };
-      this.onStatus(status);
-      speechSynthesis.speak(utterance);
-    } catch {
-      this.onError(
-        "Speech is unavailable. Use the visible instructions and values.",
-      );
-      onEnd();
-    }
+      })
+      .catch((error) => {
+        if (token !== this.generation) return;
+        const reason =
+          error instanceof Error ? error.message : "unknown synthesis error";
+        this.onError(
+          `The bundled voice could not load: ${reason}. Using your browser's English voice instead.`,
+        );
+        this.speakWithBrowser(text, retryMessage, finish, token);
+      });
   }
   async note(value, dataset, token = this.generation) {
     try {

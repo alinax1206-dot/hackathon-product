@@ -1,4 +1,5 @@
 import { publishLesson, unlockLesson, readClassroom } from "./classroom.js";
+import { answerChartQuestion } from "./chartQuestions.js";
 import {
   DEFAULT_DECIMAL_PLACES,
   MAX_DECIMAL_PLACES,
@@ -56,7 +57,6 @@ const state = {
   dirty: false,
   learnerPreview: false,
   previewReturn: 3,
-  letterKeys: true,
   notice: "",
   playbackState: "stopped",
   file: "",
@@ -92,6 +92,7 @@ const playback = new Playback({
   },
   onStatus: (message) => {
     state.playerStatus = message;
+    assistant?.setSpeechActivity(message);
     state.playbackState =
       message.startsWith("Reading") || message.startsWith("Speaking")
         ? "speaking"
@@ -99,16 +100,22 @@ const playback = new Playback({
           ? "paused"
           : message.startsWith("Playing")
             ? "playing"
-            : message.startsWith("Loading")
+            : ["Loading", "Downloading", "Preparing"].some((prefix) =>
+                  message.startsWith(prefix),
+                )
               ? "loading"
               : "stopped";
     const live = document.querySelector("#player-status");
     if (live) live.textContent = message;
+    const assistantLive = document.querySelector("#assistant-status");
+    if (assistantLive && playback.kind === "speech")
+      assistantLive.textContent = message;
     updatePlaybackButtons();
     emitGuidance("playbackChanged");
   },
   onError: (message) => {
     state.playerStatus = message;
+    assistant?.setSpeechActivity(message, true);
     const live = document.querySelector("#player-status");
     if (live) live.textContent = message;
     emitGuidance("errorOccurred");
@@ -191,8 +198,9 @@ function stopAll() {
 }
 function readPoint() {
   const p = state.data.data[state.selected];
+  const unit = state.data.unit ? ` ${state.data.unit}` : "";
   playback.speak(
-    `${p.label}, ${formatValue(p.value, state.data)} ${state.data.unit}.`,
+    `${p.label}, ${formatValue(p.value, state.data)}${unit}.`,
     true,
   );
 }
@@ -201,6 +209,53 @@ function selectPoint(index) {
   state.selected = index;
   updateSelectedPoint();
   emitGuidance("pointSelected");
+}
+function handleChartKeydown(e) {
+  const explorer = document.querySelector("#explorer");
+  if (
+    e.isComposing ||
+    e.altKey ||
+    e.ctrlKey ||
+    e.metaKey ||
+    e.shiftKey ||
+    e.repeat
+  )
+    return;
+  const target = e.target instanceof Element ? e.target : null;
+  const inChart =
+    explorer && (target === explorer || explorer.contains(target));
+  const editable = target?.closest(
+    'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]',
+  );
+  // A second Space always sends the recording, including after focus changes.
+  // Outside recording, preserve spaces in text fields.
+  if (e.key === " ") {
+    if (!assistant.listening && editable) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (assistant.busy) return;
+    if (assistant.listening) assistant.finishListening(true);
+    else assistant.startListening();
+    return;
+  }
+  if (
+    !inChart ||
+    editable ||
+    !["ArrowLeft", "ArrowRight", "Enter"].includes(e.key)
+  )
+    return;
+  e.preventDefault();
+  if (e.key === "Enter") readPoint();
+  else
+    selectPoint(
+      Math.max(
+        0,
+        Math.min(
+          state.data.data.length - 1,
+          state.selected + (e.key === "ArrowRight" ? 1 : -1),
+        ),
+      ),
+    );
 }
 function summary() {
   const d = state.data.data;
@@ -229,7 +284,9 @@ function go(step) {
       (!state.aiRecommendation && !state.aiBusy && !state.aiManualOverride));
   if (suggestAutomatically) requestAiSuggestion({ renderBeforeFetch: false });
   render();
-  focusTitle();
+  if (step === 3)
+    document.querySelector("#explorer")?.focus({ preventScroll: true });
+  else focusTitle();
 }
 function home() {
   importGeneration++;
@@ -309,10 +366,37 @@ function archiveLesson(material) {
     return null;
   }
 }
-const DRAFT_FIELDS = ["creatorStep", "rows", "fields", "headerAdjustments", "x", "y", "data", "metadata", "published", "classLesson", "file", "sheets", "sheet", "aggregation", "unit", "decimalPlaces", "noUnit", "mapped", "start", "end", "musicStyle", "soundMapping", "selected"];
+const DRAFT_FIELDS = [
+  "creatorStep",
+  "rows",
+  "fields",
+  "headerAdjustments",
+  "x",
+  "y",
+  "data",
+  "metadata",
+  "published",
+  "classLesson",
+  "file",
+  "sheets",
+  "sheet",
+  "aggregation",
+  "unit",
+  "decimalPlaces",
+  "noUnit",
+  "mapped",
+  "start",
+  "end",
+  "musicStyle",
+  "soundMapping",
+  "selected",
+];
 function parkCurrentDraft() {
-  if (state.mode !== "creator" || !state.dirty || (!state.file && !state.data)) return;
-  const values = Object.fromEntries(DRAFT_FIELDS.map((field) => [field, state[field]]));
+  if (state.mode !== "creator" || !state.dirty || (!state.file && !state.data))
+    return;
+  const values = Object.fromEntries(
+    DRAFT_FIELDS.map((field) => [field, state[field]]),
+  );
   state.parkedDrafts.push({
     label: state.metadata.title || state.file || "Untitled draft",
     savedAt: Date.now(),
@@ -326,7 +410,11 @@ function resumeParkedDraft(index) {
   Object.assign(state, structuredClone(draft.values));
   state.view = null;
   state.mode = "creator";
-  state.account = { id: localStorage.getItem("chartaloud.creator.id") || crypto.randomUUID(), name: "Creator", role: "creator" };
+  state.account = {
+    id: localStorage.getItem("chartaloud.creator.id") || crypto.randomUUID(),
+    name: "Creator",
+    role: "creator",
+  };
   state.creatorData = state.data;
   state.aiDataset = state.data;
   state.aiManualOverride = true;
@@ -679,13 +767,29 @@ function libraryContent() {
   return `<section class="materials-screen"><h1 tabindex="-1">Your learning material</h1>${state.unlocked ? `<div class="panel recent-material"><h2>${escape(state.unlocked.material.title)}</h2><p>Code ${escape(state.unlocked.code)}</p><button id="continue-recent" class="button">Continue learning</button></div>` : ""}<form id="join-class-form" class="panel"><label for="class-code">Six-digit class code</label><input id="class-code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" required autocomplete="off"><button id="join-class" class="button" type="submit">Open another material</button></form></section>`;
 }
 function archiveContent() {
-  const items = [...state.library].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  const draftCards = state.parkedDrafts.map((draft, index) => `<article class="archive-card draft-card"><div><h2>${escape(draft.label)}</h2><p>Draft · kept in this tab until reload</p></div><button type="button" data-resume-draft="${index}" class="button">Resume draft</button></article>`).join("");
-  return `<section class="archive-screen"><h1 tabindex="-1">Material Archive</h1><p class="archive-intro">Published materials are saved in this browser. Drafts stay in this tab.</p>${state.mode === "creator" && state.dirty ? `<article class="archive-card draft-card"><div><h2>${escape(state.metadata.title || state.file || "Current draft")}</h2><p>Current draft · kept in this tab until reload</p></div><button type="button" id="resume-current-draft" class="button">Resume draft</button></article>` : ""}${draftCards}${items.length ? `<div class="archive-list">${items.map((material, index) => {
-    const lesson = archiveLesson(material);
-    const date = new Date(material.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-    return `<article class="archive-card"><div><h2>${escape(material.title)}</h2><p>Revision ${material.revision} · ${escape(date)} · ${material.dataset.data.length} points</p>${lesson ? `<p class="archive-code">Code <strong>${escape(lesson.code)}</strong></p>` : '<p class="archive-code">No class code saved</p>'}</div><div class="archive-actions"><button type="button" data-review-archive="${index}" class="button">Review in Creator</button>${lesson ? `<button type="button" data-learn-archive="${index}">Open as learner</button>` : ""}</div></article>`;
-  }).join("")}</div>` : '<div class="panel archive-empty"><p>No published materials yet.</p><button type="button" id="archive-create" class="button">Create a material</button></div>'}</section>`;
+  const items = [...state.library].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
+  const draftCards = state.parkedDrafts
+    .map(
+      (draft, index) =>
+        `<article class="archive-card draft-card"><div><h2>${escape(draft.label)}</h2><p>Draft · kept in this tab until reload</p></div><button type="button" data-resume-draft="${index}" class="button">Resume draft</button></article>`,
+    )
+    .join("");
+  return `<section class="archive-screen"><h1 tabindex="-1">Material Archive</h1><p class="archive-intro">Published materials are saved in this browser. Drafts stay in this tab.</p>${state.mode === "creator" && state.dirty ? `<article class="archive-card draft-card"><div><h2>${escape(state.metadata.title || state.file || "Current draft")}</h2><p>Current draft · kept in this tab until reload</p></div><button type="button" id="resume-current-draft" class="button">Resume draft</button></article>` : ""}${draftCards}${
+    items.length
+      ? `<div class="archive-list">${items
+          .map((material, index) => {
+            const lesson = archiveLesson(material);
+            const date = new Date(material.createdAt).toLocaleDateString(
+              "en-US",
+              { year: "numeric", month: "short", day: "numeric" },
+            );
+            return `<article class="archive-card"><div><h2>${escape(material.title)}</h2><p>Revision ${material.revision} · ${escape(date)} · ${material.dataset.data.length} points</p>${lesson ? `<p class="archive-code">Code <strong>${escape(lesson.code)}</strong></p>` : '<p class="archive-code">No class code saved</p>'}</div><div class="archive-actions"><button type="button" data-review-archive="${index}" class="button">Review in Creator</button>${lesson ? `<button type="button" data-learn-archive="${index}">Open as learner</button>` : ""}</div></article>`;
+          })
+          .join("")}</div>`
+      : '<div class="panel archive-empty"><p>No published materials yet.</p><button type="button" id="archive-create" class="button">Create a material</button></div>'
+  }</section>`;
 }
 function codeContent() {
   if (!state.classLesson || state.dirty) return publishContent();
@@ -912,7 +1016,11 @@ function openCreatorImport() {
   emitGuidance("modeEntered");
 }
 
-async function handleAssistantIntent(intent) {
+async function handleAssistantIntent(intent, text) {
+  if ([2, 3].includes(state.step)) {
+    const answer = answerChartQuestion(text, state.data);
+    if (answer) return answer;
+  }
   if (!intent) return null;
   if (intent === "home") {
     home();
@@ -984,12 +1092,13 @@ assistant = new VoiceAssistant({
   getContext: assistantContext,
   handleIntent: handleAssistantIntent,
   stopPlayback: () => playback.stop(),
-  speak: (text, onEnd) =>
+  speak: (text, onEnd, options) =>
     playback.speak(text, true, {
       status: "Speaking assistant response.",
       retryMessage:
         "The answer is visible, but speech could not start. Please ask again or read the answer above.",
       onEnd,
+      bundledVoice: options.bundledVoice,
     }),
   requestRender: () => render(),
 });
@@ -1037,6 +1146,10 @@ function progressNav() {
 }
 
 function render() {
+  const activeId =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement.id
+      : "";
   document.querySelector("#app").innerHTML =
     `<a class="skip" href="#main">Skip to content</a><header><a href="#" class="brand" id="home" aria-label="ChartAloud Studio home">${logo}<span class="brand-words"><strong>ChartAloud</strong><small>studio</small></span></a><button type="button" id="archive-toggle" class="archive-header-action">${state.view === "archive" ? "Back to workspace" : "Material Archive"}</button></header><div class="layout ${state.view === "archive" ? "archive-layout" : state.learnerPreview || (state.mode === "user" && [2, 3].includes(state.step)) ? "learner-layout" : state.mode === "creator" ? "creator-layout" : !state.mode ? "home-layout" : ""}"><aside>${state.view === "archive" ? "" : progressNav()}</aside><main id="main">${state.error ? `<div role="alert" class="error">${escape(state.error)}</div>` : ""}${state.notice && state.view !== "archive" ? `<p role="status" class="notice">${escape(state.notice)}</p>` : ""}${content()}<footer><span>ChartAloud Studio · Your data stays in this browser.</span></footer></main></div>${assistant.html(escape)}`;
   document.querySelector("#home").onclick = (e) => {
@@ -1045,6 +1158,8 @@ function render() {
   };
   bind();
   assistant.bind();
+  if (activeId)
+    document.getElementById(activeId)?.focus({ preventScroll: true });
 }
 function aiAdvisorContent() {
   if (!state.data) return "";
@@ -1080,6 +1195,13 @@ function aiAdvisorContent() {
 function coloredTitle(title) {
   return `<span class="colored-title" aria-hidden="true">${[...title].map((letter, index) => `<span class="title-letter title-color-${index % 6}">${escape(letter)}</span>`).join("")}</span>`;
 }
+function keyboardHelp(userMode) {
+  return `<div class="keyboard-help" role="note" aria-label="Keyboard shortcuts">
+    <strong>Keyboard shortcuts</strong>
+    <p>${userMode ? "This chart is focused automatically when Explore opens. Use" : "The chart is focused automatically. Use"} <kbd>←</kbd>/<kbd>→</kbd> to select the previous or next point; <kbd>Enter</kbd> to hear its exact label, value and unit; <kbd>Space</kbd> to start voice input and press it again to stop and send your question.</p>
+    ${userMode ? "<small>Voice replies use your browser voice. Highest and lowest value questions work without a remote AI connection.</small>" : ""}
+  </div>`;
+}
 function learnerContent() {
   const data = state.data.data;
   const title =
@@ -1089,16 +1211,16 @@ function learnerContent() {
   const range = Math.max(...data.map((item) => Math.abs(item.value))) || 1;
   const point = data[state.selected];
   return `<section class="learner-screen" aria-label="Learning chart">
-    <h1 tabindex="-1" aria-label="${escape(title)}">${coloredTitle(title)}</h1>
+    <h1 id="learner-title" tabindex="-1" aria-label="${escape(title)}">${coloredTitle(title)}</h1>
     ${state.learnerPreview ? '<p class="learner-preview-tag">Learner preview · unpublished</p>' : ""}
     <div class="learner-workspace"><section class="learner-chart" aria-labelledby="chart-heading">
       <div class="learner-chart-heading"><h2 id="chart-heading">${escape(state.data.yAxis)} by ${escape(state.data.xAxis)}</h2><p>${escape(state.data.unit || "No unit")}</p></div>
+      ${keyboardHelp(state.mode === "user" && !state.learnerPreview)}
       <div class="chart" id="explorer" tabindex="0" role="group" aria-label="Explore data points" aria-describedby="keyboard-instructions">${data.map((item, index) => `<button class="bar-item ${index === state.selected ? "selected" : ""}" data-point="${index}" aria-label="${escape(item.label)}, ${formatValue(item.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${index === state.selected}"><span class="bar-value">${formatValue(item.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(item.value) / range) * 245)}px;--bar-index:${index}"></span><span class="bar-label">${escape(item.label)}</span></button>`).join("")}</div>
-      <p class="learner-keyline">← → Select point <span>·</span> Enter Read value <span>·</span> Space Ask the guide</p>
-      <p id="player-status" class="sr-only" role="status" aria-live="polite">${escape(state.playerStatus)}</p>
+      <p id="player-status" class="playback-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p>
     </section></div>
     <span id="selected-count" class="sr-only">${state.selected + 1} of ${data.length}</span><span id="selected-label" class="sr-only">${escape(point.label)}</span><span id="selected-value" class="sr-only">${formatValue(point.value, state.data)} ${escape(state.data.unit)}</span>
-    <p id="keyboard-instructions" class="sr-only">Use Left and Right arrows to select a point, Enter to hear its value, Space to ask the guide, and Escape to stop audio.</p>
+    <p id="keyboard-instructions" class="sr-only">${state.mode === "user" && !state.learnerPreview ? "This chart is focused automatically when Explore opens." : "Focus this chart to use keyboard controls."} Use Left and Right arrows to select the previous or next point. Press Enter to hear its exact label, displayed value, and unit. Press Space once to start voice input and again to stop and send your question.</p>
     <p id="selection-status" class="sr-only" role="status"></p>
   </section>`;
 }
@@ -1114,11 +1236,12 @@ function editorPreviewContent() {
     ${rangeContent()}${aiAdvisorContent()}${metadataContent()}
     <div class="overview-panel" id="overview-text"><h2>Overview</h2><p>${escape(overviewText())}</p></div>
     <div class="chart-area creator-chart"><div class="chart-header"><h2>Chart to music</h2></div>
+      ${keyboardHelp(false)}
       <div class="chart" id="explorer" tabindex="0" role="group" aria-label="Explore data points" aria-describedby="keyboard-instructions">${data.map((item, index) => `<button class="bar-item ${index === state.selected ? "selected" : ""}" data-point="${index}" aria-label="${escape(item.label)}, ${formatValue(item.value, state.data)} ${escape(state.data.unit)}" aria-pressed="${index === state.selected}"><span class="bar-value">${formatValue(item.value, state.data)}</span><span class="bar" style="height:${Math.max(16, (Math.abs(item.value) / range) * 245)}px;--bar-index:${index}"></span><span class="bar-label">${escape(item.label)}</span></button>`).join("")}</div>
-      <p id="player-status" class="sr-only" role="status" aria-live="polite">${escape(state.playerStatus)}</p>
+      <p id="player-status" class="playback-status" role="status" aria-live="polite">${escape(state.playerStatus)}</p>
     </div>
     <span id="selected-count" class="sr-only">${state.selected + 1} of ${data.length}</span><span id="selected-label" class="sr-only">${escape(point.label)}</span><span id="selected-value" class="sr-only">${formatValue(point.value, state.data)} ${escape(state.data.unit)}</span>
-    <p id="keyboard-instructions" class="sr-only">Use Left and Right arrows to select a point, Enter to hear its value, Space to play or pause the music, and Escape to stop.</p><p id="selection-status" class="sr-only" role="status"></p>
+    <p id="keyboard-instructions" class="sr-only">Focus this chart to use keyboard controls. Use Left and Right arrows to select the previous or next point. Press Enter to hear its exact label, displayed value, and unit. Press Space once to start voice input and again to stop and send your question.</p><p id="selection-status" class="sr-only" role="status"></p>
     <div class="preview-actions"><button id="preview-learner">Preview as learner</button><button id="review-publish" class="button">Continue to publish</button></div>
   </section>`;
 }
@@ -1143,19 +1266,27 @@ function bind() {
     const e = document.getElementById(id);
     if (e) e.onclick = fn;
   };
-  on("archive-toggle", () => state.view === "archive" ? closeArchive() : openArchive());
+  on("archive-toggle", () =>
+    state.view === "archive" ? closeArchive() : openArchive(),
+  );
   on("archive-create", enterCreator);
   on("resume-current-draft", closeArchive);
   document.querySelectorAll("[data-resume-draft]").forEach((button) => {
-    button.onclick = () => resumeParkedDraft(Number(button.dataset.resumeDraft));
+    button.onclick = () =>
+      resumeParkedDraft(Number(button.dataset.resumeDraft));
   });
-  const archiveItems = [...state.library].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const archiveItems = [...state.library].sort(
+    (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+  );
   document.querySelectorAll("[data-review-archive]").forEach((button) => {
-    button.onclick = () => reviewArchiveMaterial(archiveItems[Number(button.dataset.reviewArchive)]);
+    button.onclick = () =>
+      reviewArchiveMaterial(archiveItems[Number(button.dataset.reviewArchive)]);
   });
   document.querySelectorAll("[data-learn-archive]").forEach((button) => {
     button.onclick = () => {
-      const lesson = archiveLesson(archiveItems[Number(button.dataset.learnArchive)]);
+      const lesson = archiveLesson(
+        archiveItems[Number(button.dataset.learnArchive)],
+      );
       if (!lesson) return;
       state.view = null;
       state.mode = "user";
@@ -1412,11 +1543,6 @@ function bind() {
     }
     emitGuidance("overviewRequested");
   });
-  const letter = document.querySelector("#letter-keys");
-  if (letter)
-    letter.onchange = () => {
-      state.letterKeys = letter.checked;
-    };
   const style = document.querySelector("#music-style");
   if (style)
     style.onchange = () => {
@@ -1431,87 +1557,9 @@ function bind() {
   document.querySelectorAll("[data-point]").forEach((el) => {
     el.onclick = () => selectPoint(Number(el.dataset.point));
   });
-  const explorer = document.querySelector("#explorer");
-  if (explorer)
-    explorer.onkeydown = (e) => {
-      if (
-        e.target !== explorer ||
-        e.altKey ||
-        e.ctrlKey ||
-        e.metaKey ||
-        e.shiftKey ||
-        e.repeat
-      )
-        return;
-      const keys = [
-        "ArrowLeft",
-        "ArrowRight",
-        "Home",
-        "End",
-        "Enter",
-        " ",
-        ...(state.letterKeys ? ["r", "R"] : []),
-      ];
-      if (!keys.includes(e.key)) return;
-      e.preventDefault();
-      if (e.key === "Enter") readPoint();
-      else if (e.key.toLowerCase() === "r")
-        playback.point(state.selected, state.data);
-      else if (
-        e.key === " " &&
-        (state.mode === "user" || state.learnerPreview)
-      ) {
-        if (assistant.listening) assistant.finishListening(true);
-        else assistant.startListening();
-      } else if (e.key === " " && !state.aiBusy)
-        playback.toggle(state.data, state.musicStyle);
-      else
-        selectPoint(
-          e.key === "Home"
-            ? 0
-            : e.key === "End"
-              ? state.data.data.length - 1
-              : Math.max(
-                  0,
-                  Math.min(
-                    state.data.data.length - 1,
-                    state.selected + (e.key === "ArrowRight" ? 1 : -1),
-                  ),
-                ),
-        );
-    };
 }
 
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.mode && !e.altKey && !e.ctrlKey && !e.metaKey)
-    stopAll();
-  if (
-    (state.mode !== "user" && !state.learnerPreview) ||
-    state.step !== 3 ||
-    e.repeat ||
-    e.altKey ||
-    e.ctrlKey ||
-    e.metaKey ||
-    e.shiftKey
-  )
-    return;
-  if (
-    e.target.closest?.(
-      "button, input, textarea, select, a, summary, [contenteditable], [role=button], #explorer",
-    )
-  )
-    return;
-  if (!["ArrowLeft", "ArrowRight", "Enter", " "].includes(e.key)) return;
-  e.preventDefault();
-  if (e.key === "ArrowLeft") selectPoint(Math.max(0, state.selected - 1));
-  if (e.key === "ArrowRight")
-    selectPoint(Math.min(state.data.data.length - 1, state.selected + 1));
-  if (e.key === "Enter") readPoint();
-  if (e.key === " ") {
-    if (assistant.listening) assistant.finishListening(true);
-    else assistant.startListening();
-  }
-});
+document.addEventListener("keydown", handleChartKeydown, true);
 refreshLibrary();
 render();
 assistant.welcomeMode("home");

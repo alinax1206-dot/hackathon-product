@@ -18,8 +18,22 @@ It accepts typed questions or English browser speech recognition and answers
 through Tinker. Home, User Mode, and opened lessons offer short English spoken
 greetings, subject to the browser's autoplay rules. There is no automatic long
 data summary; a learner can ask for the overview when ready.
-Replies may be spoken with the browser's installed voice. No voice package or
-voice picker is included.
+Chart values and assistant replies are synthesized locally with the bundled
+Kokoro `af_heart` English voice. The static site includes the quantized model
+and ONNX WebAssembly runtime; entering User Explore preloads about 100 MB of same-origin
+assets and shows progress, after which the browser caches them. The first
+utterance uses the browser voice immediately while Kokoro prepares in the
+background; later utterances use Kokoro. Kokoro inference runs in a Web Worker
+so model setup and synthesis do not block chart interaction.
+Brief greetings use the installed browser voice to avoid loading the model at
+page startup. Speech recognition still uses the browser's English `SpeechRecognition` API and requires microphone
+permission. If the bundled voice cannot run, speech falls back to the browser's
+English voice.
+Assistant response time also depends on the configured Tinker model and network.
+The server returns `Server-Timing` (`tinker` and total `assistant`) plus
+`X-Tinker-Elapsed-Ms` and `X-Assistant-Elapsed-Ms` headers to expose the upstream
+wait in browser devtools. Responses are capped at 220 tokens and the upstream
+request, including response-body reading, times out after 20 seconds.
 
 ## Run and verify
 
@@ -84,8 +98,12 @@ User Mode accepts a six-digit code, or resumes the most recently opened material
 in the same tab. An invalid code stays on the form. The learner Overview is a
 brief invitation; the learner can ask the floating guide for the spoken data
 summary. Explore presents a large chart without extra point or playback panels.
-Arrow keys select points, Enter reads a value, Space starts voice input, and
-Escape stops audio. The recent code is kept in session storage and restored
+Focus the chart to use its four shortcuts: Left/Right select the previous/next
+point, Enter reads its exact label, displayed value and unit, and Space starts
+voice input; press Space again to stop and send the question. Shortcuts are scoped
+to the focused chart and do not
+intercept keys from buttons, links, forms or the rest of the page. The recent
+code is kept in session storage and restored
 from the browser's published-material library on reload.
 
 Returning home preserves the current Creator draft in this tab. **Continue
@@ -168,26 +186,31 @@ local file from a spoken filename, so voice can open and focus the import task, 
 the user must confirm the native file picker. Microphone denial and unsupported
 browsers leave the text input fully usable.
 
-Tab reaches native controls. Focus the chart to use its shortcuts:
+Opening User Explore focuses the chart automatically, so keyboard exploration
+does not require a preliminary Tab. Tab itself remains the browser's standard
+focus navigation (not a custom chart shortcut). The chart handles only these
+four shortcuts:
 
-- Left/Right select a point; Home/End select first/last.
+- Left/Right select the previous/next point.
 - Enter explicitly reads the current label, displayed numeric value and unit.
-- R plays the current pitch; a checkbox can disable this single-letter shortcut.
-- In Creator Preview, Space plays or pauses the music when the chart has focus.
-- In User Explore and learner preview, Space starts voice input for the guide.
-- Escape stops application audio and value reading without navigation.
+- Space starts voice input; press it again to stop listening and send the
+  question. This applies in Creator Preview, User Explore and learner preview.
 
-Point buttons select points using native click/Enter/Space; shortcuts do not override controls, links, forms, contenteditable,
-modifier combinations or repeated keydown. No `role="application"` is used. Screen
+Tab and other keys retain their normal browser and assistive-technology behavior;
+they are not custom chart shortcuts. Chart shortcuts do not override controls,
+links, forms, contenteditable fields, modifier combinations or repeated keydown.
+No `role="application"` is used. Screen
 readers can use native buttons when they capture arrow keys. Progress updates change
 only the selected-point UI and short status, preserving focus.
 
 `src/playback.js` centrally owns oscillator notes, sequence pause/resume, recorded
-music, exact-value speech, and assistant-answer speech. Speech cancels music and
-vice versa. Cancellation
+music, exact-value speech, and assistant-answer speech. `src/kokoroSpeech.js`
+loads the bundled voice and model locally through `src/kokoroSpeech.worker.js`.
+The guide launcher visibly distinguishes listening, thinking/model loading,
+speaking, ready and error states. Speech cancels music and vice versa. Cancellation
 clears timers and invalidates stale asynchronous callbacks. Exact-value speech uses
-an available English voice with the browser’s available voice; unsupported/blocked APIs show English status
-messages. Assistant replies have a visible transcript, so
+the bundled `af_heart` voice, with the browser's English voice as a fallback;
+unsupported/blocked APIs show English status messages. Assistant replies have a visible transcript, so
 speech is never the only output. The existing event-based `src/guidance.js` adapter
 remains inert; the new user-initiated guide is a separate explicit chat interaction.
 See [Guidance integration](docs/GUIDANCE_INTEGRATION.md) for that internal event API.

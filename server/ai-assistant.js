@@ -98,10 +98,27 @@ export function createAssistantMiddleware({
   fetchImpl = globalThis.fetch,
 } = {}) {
   return async function assistant(req, res) {
+    const requestStartedAt = Date.now();
+    let tinkerElapsedMs;
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     const respond = (status, value) => {
+      const elapsedMs = Date.now() - requestStartedAt;
+      res.setHeader("X-Assistant-Elapsed-Ms", String(elapsedMs));
+      if (Number.isFinite(tinkerElapsedMs))
+        res.setHeader("X-Tinker-Elapsed-Ms", String(tinkerElapsedMs));
+      res.setHeader(
+        "Server-Timing",
+        [
+          Number.isFinite(tinkerElapsedMs)
+            ? `tinker;dur=${tinkerElapsedMs}`
+            : "",
+          `assistant;dur=${elapsedMs}`,
+        ]
+          .filter(Boolean)
+          .join(", "),
+      );
       res.statusCode = status;
       res.end(JSON.stringify(value));
     };
@@ -113,14 +130,15 @@ export function createAssistantMiddleware({
       const apiKey = getTinkerApiKey();
       if (!apiKey || apiKey === "paste_your_api_key_here") {
         return respond(503, {
-          error: "Tinker API key missing. Set TINKER_API_KEY in .env.local, then restart npm run dev.",
+          error:
+            "Tinker API key missing. Set TINKER_API_KEY in .env.local, then restart npm run dev.",
         });
       }
       const model = getTinkerModelPath();
       if (
-        (typeof model !== "string" ||
-          !/^tinker:\/\/\S+$/.test(model) ||
-          model.length > 500)
+        typeof model !== "string" ||
+        !/^tinker:\/\/\S+$/.test(model) ||
+        model.length > 500
       )
         throw new TypeError(
           "Invalid Tinker model path. Set TINKER_MODEL_PATH to a full tinker:// sampler checkpoint path.",
@@ -131,26 +149,30 @@ export function createAssistantMiddleware({
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20000);
       let response;
+      let output;
+      const tinkerStartedAt = Date.now();
       try {
         response = await fetchImpl(TINKER_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            signal: controller.signal,
-            body: JSON.stringify({
-              model,
-              messages: [
-                { role: "system", content: system },
-                ...input.history,
-                { role: "user", content: contextMessage },
-              ],
-              max_tokens: 420,
-              reasoning_effort: "low",
-            }),
-          });
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: system },
+              ...input.history,
+              { role: "user", content: contextMessage },
+            ],
+            max_tokens: 220,
+            reasoning_effort: "low",
+          }),
+        });
+        if (response.ok) output = await response.json();
       } finally {
+        tinkerElapsedMs = Date.now() - tinkerStartedAt;
         clearTimeout(timeout);
       }
       if (!response.ok) {
@@ -159,10 +181,14 @@ export function createAssistantMiddleware({
           error: `Tinker request failed (HTTP ${response.status}). Check your API key, model access, and quota.`,
         });
       }
-      const output = await response.json();
       const text = output?.choices?.[0]?.message?.content;
       return respond(200, { answer: cleanAnswer(text) });
     } catch (error) {
+      if (error?.name === "AbortError")
+        return respond(504, {
+          error:
+            "Tinker did not respond within 20 seconds. Try a shorter question, or check model availability and network latency.",
+        });
       if (
         error instanceof TypeError &&
         /^(Ask|Expected|Assistant request|Assistant context|Invalid)/.test(
@@ -170,7 +196,25 @@ export function createAssistantMiddleware({
         )
       )
         return respond(400, { error: error.message });
-      console.error("AI assistant error:", error?.name || "unknown");
+      const connectionErrors = [error?.cause, ...(error?.cause?.errors || [])];
+      const code = connectionErrors.find(
+        (item) => typeof item?.code === "string",
+      )?.code;
+      // Log only a safe diagnostic code, never request headers or credentials.
+      console.error(
+        "AI assistant error:",
+        error?.name || "unknown",
+        code || "",
+      );
+      if (code) {
+        const blocked = ["EACCES", "EPERM"].includes(code);
+        return respond(502, {
+          code: blocked ? "AI_NETWORK_BLOCKED" : "AI_CONNECTION_FAILED",
+          error: blocked
+            ? "The server is blocked from connecting to the AI service. Check the server's network permissions or firewall. Exact chart questions such as highest and lowest values still work locally."
+            : "The server could not connect to the AI service. Check the server's internet connection, proxy, and TLS settings. Exact chart questions such as highest and lowest values still work locally.",
+        });
+      }
       return respond(502, {
         error:
           "The AI assistant is unavailable right now. The rest of ChartAloud still works.",

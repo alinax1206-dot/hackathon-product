@@ -56,6 +56,8 @@ export class VoiceAssistant {
     this.listening = false;
     this.busy = false;
     this.speaking = false;
+    this.activityStatus = "";
+    this.activityError = false;
     this.autoSpeak = true;
     this.draft = "";
     this.messages = [
@@ -74,12 +76,12 @@ export class VoiceAssistant {
           `<div class="assistant-message ${message.role}"><span>${message.role === "assistant" ? "Guide" : "You"}</span><p>${escape(message.content)}</p></div>`,
       )
       .join("");
-    return `<div class="voice-assistant ${this.open ? "is-open" : ""}" aria-label="AI voice assistant">
-      <button type="button" id="assistant-toggle" class="assistant-launcher" aria-label="Talk to ChartAloud" aria-expanded="${this.open}" aria-controls="assistant-panel"><chat-mascot state="${this.motionState}" src="/motion/mascot.webp" aria-hidden="true"></chat-mascot><span>Talk to ChartAloud</span></button>
+    return `<div class="voice-assistant ${this.open ? "is-open" : ""} ${this.launcherClass}" aria-label="AI voice assistant">
+      <button type="button" id="assistant-toggle" class="assistant-launcher" aria-label="${escape(this.launcherStatus)}" aria-expanded="${this.open}" aria-controls="assistant-panel"><chat-mascot state="${this.motionState}" src="/motion/mascot.webp" aria-hidden="true"></chat-mascot><span class="assistant-launcher-status" aria-live="polite" aria-atomic="true">${escape(this.launcherStatus)}</span></button>
       <section id="assistant-panel" class="assistant-panel" ${this.open ? "" : "hidden"}>
         <header class="assistant-heading"><div><strong>ChartAloud Guide</strong><small>Voice and text · English</small></div><button type="button" id="assistant-close" aria-label="Close voice assistant">×</button></header>
         <div id="assistant-messages" class="assistant-messages" role="log" aria-live="polite" aria-relevant="additions">${messages}${this.busy ? '<div class="assistant-thinking">Thinking…</div>' : ""}</div>
-        <p id="assistant-status" class="assistant-status">${this.listening ? "Listening. Pause for 3 seconds to send." : this.busy ? "Preparing an answer." : "Ask about this page or the current data."}</p>
+        <p id="assistant-status" class="assistant-status">${this.listening ? "Listening. Press Space again to send (or pause for 3 seconds)." : this.busy ? "Preparing an answer." : "Ask about this page or the current data."}</p>
         <form id="assistant-form" class="assistant-form">
           <label class="sr-only" for="assistant-input">Ask ChartAloud</label>
           <input id="assistant-input" type="text" maxlength="1200" autocomplete="off" value="${escape(this.draft)}" placeholder="Ask about this page…" ${this.busy ? "disabled" : ""}>
@@ -87,6 +89,7 @@ export class VoiceAssistant {
           <button type="submit" class="assistant-send" ${this.busy ? "disabled" : ""}>Send</button>
         </form>
         <label class="assistant-autospeak"><input id="assistant-autospeak" type="checkbox" ${this.autoSpeak ? "checked" : ""}> Speak answers automatically</label>
+        <p class="assistant-shortcuts">Space starts voice input; Space again sends it. When typing, Space inserts a space. Tab moves between controls; Enter activates them.</p>
         <p class="assistant-privacy">Only the question and current prepared chart context are sent to AI. Your source file stays in this browser.</p>
       </section>
     </div>`;
@@ -95,17 +98,73 @@ export class VoiceAssistant {
   get motionState() {
     return this.listening
       ? "listening"
-      : this.busy
+      : this.busy ||
+          /^(Preparing|Downloading|Loading|Browser English voice will be used)/.test(
+            this.activityStatus,
+          )
         ? "thinking"
-        : this.speaking
+        : this.speaking ||
+            /^(Speaking|Reading exact value)/.test(this.activityStatus)
           ? "speaking"
           : "idle";
+  }
+
+  get launcherClass() {
+    return `is-${this.motionState}${this.activityError ? " has-activity-error" : ""}`;
+  }
+
+  get launcherStatus() {
+    if (this.listening) return "Listening — press Space to send";
+    if (this.busy) return "Thinking…";
+    if (this.activityStatus) return this.activityStatus;
+    if (this.speaking) return "Speaking…";
+    return "Press Space to talk; press again to send";
   }
 
   syncMotion() {
     document
       .querySelectorAll(".voice-assistant chat-mascot")
       .forEach((mascot) => mascot.setState(this.motionState));
+    const root = document.querySelector(".voice-assistant");
+    const launcher = root?.querySelector("#assistant-toggle");
+    if (root) {
+      root.classList.toggle("is-open", this.open);
+      for (const state of ["idle", "listening", "thinking", "speaking"])
+        root.classList.toggle(`is-${state}`, state === this.motionState);
+      root.classList.toggle("has-activity-error", this.activityError);
+    }
+    if (launcher) {
+      launcher.setAttribute("aria-label", this.launcherStatus);
+      const status = launcher.querySelector(".assistant-launcher-status");
+      if (status) status.textContent = this.launcherStatus;
+    }
+  }
+
+  setSpeechActivity(message, isError = false) {
+    const completesCurrentSpeech =
+      message.startsWith("Speaking with") ||
+      message.startsWith("Ready to play");
+    if ((this.listening || this.activityError) && !completesCurrentSpeech)
+      return;
+    const speechStatus =
+      message.startsWith("Loading packaged English voice") ||
+      message.startsWith("Preparing the local English voice") ||
+      message.startsWith("Downloading ") ||
+      message.startsWith("Preparing ") ||
+      message.startsWith("Browser English voice will be used") ||
+      message.startsWith("Speaking assistant response") ||
+      message.startsWith("Speaking with") ||
+      message.startsWith("Reading exact value") ||
+      message.startsWith("Local English voice ready") ||
+      message.startsWith("Ready to play");
+    if (!speechStatus && !isError) return;
+    this.activityError = isError;
+    this.activityStatus =
+      message.startsWith("Ready to play") ||
+      message.startsWith("Local English voice ready")
+        ? ""
+        : message;
+    this.syncMotion();
   }
 
   setSpeaking(value) {
@@ -113,20 +172,21 @@ export class VoiceAssistant {
     this.syncMotion();
   }
 
-  speakAnswer(answer) {
+  speakAnswer(answer, { bundledVoice = false } = {}) {
     this.setSpeaking(true);
-    this.speak(answer, () => this.setSpeaking(false));
+    this.speak(answer, () => this.setSpeaking(false), { bundledVoice });
   }
 
   welcomeMode(mode) {
-    const greeting = mode === "home"
-      ? "Hi! Welcome to ChartAloud. Would you like Creator Mode or User Mode?"
-      : "Hi! Enter a class code, or continue a recent lesson when you are ready.";
+    const greeting =
+      mode === "home"
+        ? "Hi! Welcome to ChartAloud. Would you like Creator Mode or User Mode?"
+        : "Hi! Enter a class code, or continue a recent lesson when you are ready.";
     this.open = false;
     this.messages = [{ role: "assistant", content: greeting }];
     this.busy = false;
     this.requestRender();
-    queueMicrotask(() => this.speakAnswer(greeting));
+    queueMicrotask(() => this.speakAnswer(greeting, { bundledVoice: false }));
   }
 
   welcome(title, speak = false) {
@@ -140,7 +200,12 @@ export class VoiceAssistant {
     this.busy = false;
     this.requestRender();
     if (speak)
-      queueMicrotask(() => this.speakAnswer("Hi! I'm here whenever you're ready. What would you like to explore?"));
+      queueMicrotask(() =>
+        this.speakAnswer(
+          "Hi! I'm here whenever you're ready. What would you like to explore?",
+          { bundledVoice: false },
+        ),
+      );
   }
 
   bind(root = document) {
@@ -185,10 +250,15 @@ export class VoiceAssistant {
   }
 
   startListening() {
+    if (this.busy || this.listening) return;
     const Recognition =
       globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
     this.open = true;
+    this.activityStatus = "";
+    this.activityError = false;
     if (!Recognition) {
+      this.activityStatus = "Voice input is unavailable in this browser";
+      this.activityError = true;
       this.addAnswer(
         "Voice input is not supported in this browser. You can type your question instead.",
         false,
@@ -226,7 +296,8 @@ export class VoiceAssistant {
       if (input) input.value = this.draft;
       const status = document.querySelector("#assistant-status");
       if (status)
-        status.textContent = "Listening. Pause for 3 seconds to send.";
+        status.textContent =
+          "Listening. Press Space again to send (or pause for 3 seconds).";
       clearTimeout(this.silenceTimer);
       this.silenceTimer = setTimeout(
         () => this.finishListening(true),
@@ -235,9 +306,22 @@ export class VoiceAssistant {
     };
     recognition.onerror = (event) => {
       clearTimeout(this.silenceTimer);
-      if (["aborted", "no-speech"].includes(event.error)) return;
+      if (event.error === "aborted") return;
+      if (event.error === "no-speech") {
+        this.listening = false;
+        this.recognition = null;
+        this.activityStatus = "No speech detected — press Space to try again";
+        this.activityError = true;
+        this.requestRender();
+        return;
+      }
       this.listening = false;
       this.recognition = null;
+      this.activityStatus =
+        event.error === "not-allowed"
+          ? "Microphone access blocked"
+          : "Voice input failed — press Space to retry";
+      this.activityError = true;
       this.addAnswer(
         event.error === "not-allowed"
           ? "Microphone access is blocked. Allow microphone access in the browser, then try again."
@@ -246,13 +330,20 @@ export class VoiceAssistant {
       );
     };
     recognition.onend = () => {
+      clearTimeout(this.finishTimer);
       clearTimeout(this.silenceTimer);
       const submit = this.shouldSubmitAfterEnd || this.hadSpeech;
       this.listening = false;
       this.recognition = null;
       this.shouldSubmitAfterEnd = false;
       if (submit && this.draft.trim()) this.submit(this.draft);
-      else this.requestRender();
+      else {
+        if (!this.activityStatus) {
+          this.activityStatus = "No speech detected — press Space to try again";
+          this.activityError = true;
+        }
+        this.requestRender();
+      }
     };
     try {
       recognition.start();
@@ -261,6 +352,8 @@ export class VoiceAssistant {
     } catch {
       this.listening = false;
       this.recognition = null;
+      this.activityStatus = "Microphone could not start — press Space to retry";
+      this.activityError = true;
       this.addAnswer(
         "The microphone could not start. Please try again or type your question.",
         false,
@@ -275,6 +368,15 @@ export class VoiceAssistant {
     }
     clearTimeout(this.silenceTimer);
     this.shouldSubmitAfterEnd = submit;
+    // Keep the latest interim text and do not wait indefinitely for onend.
+    const recognition = this.recognition;
+    this.finishTimer = setTimeout(() => {
+      if (this.recognition !== recognition) return;
+      const text = this.draft;
+      this.cancelListening(false);
+      if (submit && text.trim()) this.submit(text);
+      else this.requestRender();
+    }, 500);
     try {
       this.recognition.stop();
     } catch {
@@ -283,12 +385,15 @@ export class VoiceAssistant {
   }
 
   cancelListening(render = true) {
+    clearTimeout(this.finishTimer);
     clearTimeout(this.silenceTimer);
     this.shouldSubmitAfterEnd = false;
     if (this.recognition) {
       const recognition = this.recognition;
       this.recognition = null;
       recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
       try {
         recognition.abort();
       } catch {}
@@ -311,6 +416,9 @@ export class VoiceAssistant {
     this.messages.push({ role: "assistant", content: answer });
     this.messages = this.messages.slice(-12);
     this.busy = false;
+    if (!speak && !this.activityError) {
+      this.activityStatus = "";
+    }
     this.requestRender();
     if (speak) queueMicrotask(() => this.speakAnswer(answer));
   }
@@ -319,11 +427,15 @@ export class VoiceAssistant {
     const text = String(rawText || "").trim();
     if (!text || this.busy) return;
     this.cancelListening(false);
+    this.stopPlayback();
+    this.speaking = false;
     this.open = true;
     this.draft = "";
     this.messages.push({ role: "user", content: text });
     this.messages = this.messages.slice(-12);
     this.busy = true;
+    this.activityStatus = "";
+    this.activityError = false;
     this.requestRender();
     try {
       const localAnswer = await this.handleIntent(

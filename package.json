@@ -12,6 +12,7 @@
     "format": "prettier --write src tests playwright.config.js"
   },
   "dependencies": {
+    "kokoro-js": "^1.2.1",
     "papaparse": "^5.5.3",
     "read-excel-file": "^9.3.14",
     "vite": "^7.2.2"
@@ -19,5 +20,8 @@
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "prettier": "^3.9.10"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
   }
 }

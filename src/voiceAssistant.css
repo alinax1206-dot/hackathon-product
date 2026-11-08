@@ -10,17 +10,72 @@
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
-  border: 1px solid var(--ink);
+  gap: 10px;
+  border: 2px solid var(--ink);
   border-radius: 999px;
   background: var(--ink);
   color: #fff;
   font-weight: 800;
-  box-shadow: 0 10px 26px #0530612a;
+  box-shadow: none;
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease;
 }
 .assistant-launcher:hover {
   background: var(--blue);
   color: #fff;
+  transform: translateY(-2px);
+}
+.assistant-launcher:focus-visible {
+  outline: 3px solid #ef8a62;
+  outline-offset: 4px;
+}
+.assistant-launcher-status {
+  display: block;
+  max-width: 190px;
+  font-size: 0.83rem;
+  line-height: 1.2;
+  text-align: left;
+}
+.voice-assistant.has-activity-error .assistant-launcher {
+  border-color: #ff8c8c;
+}
+.assistant-launcher chat-mascot {
+  transform-origin: center;
+  transition:
+    transform 180ms ease,
+    filter 180ms ease;
+  filter: drop-shadow(0 5px 9px #061d3d44);
+}
+.assistant-launcher:hover chat-mascot {
+  transform: translateY(-3px) scale(1.035);
+  filter: drop-shadow(0 8px 13px #061d3d66);
+}
+.voice-assistant.is-listening .assistant-launcher chat-mascot {
+  animation: assistant-listening-glow 1.5s ease-in-out infinite;
+}
+.voice-assistant.is-thinking .assistant-launcher chat-mascot {
+  animation: assistant-thinking-glow 1.8s ease-in-out infinite;
+}
+.voice-assistant.is-speaking .assistant-launcher chat-mascot {
+  animation: assistant-speaking-glow 1.1s ease-in-out infinite;
+}
+@keyframes assistant-listening-glow {
+  50% {
+    filter: drop-shadow(0 0 7px #ffb84d) drop-shadow(0 0 16px #ffb84d);
+    transform: scale(1.035);
+  }
+}
+@keyframes assistant-thinking-glow {
+  50% {
+    filter: drop-shadow(0 0 7px #8dd7ff) drop-shadow(0 0 16px #8dd7ff);
+  }
+}
+@keyframes assistant-speaking-glow {
+  50% {
+    filter: drop-shadow(0 0 7px #7de6c0) drop-shadow(0 0 16px #7de6c0);
+    transform: scale(1.025);
+  }
 }
 .assistant-panel {
   margin-top: 10px;
@@ -173,11 +228,28 @@ body.contrast .assistant-message > span {
   .assistant-messages {
     height: min(260px, 36vh);
   }
-  .assistant-launcher span:last-child {
-    display: none;
+  .assistant-launcher-status {
+    max-width: 130px;
+    font-size: 0.72rem;
   }
   .settings #assistant-header {
     padding: 5px 8px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .assistant-launcher,
+    .assistant-launcher chat-mascot {
+      transition: none;
+    }
+    .voice-assistant.is-listening .assistant-launcher,
+    .voice-assistant.is-thinking .assistant-launcher,
+    .voice-assistant.is-speaking .assistant-launcher {
+      animation: none;
+    }
+    .voice-assistant.is-listening .assistant-launcher chat-mascot,
+    .voice-assistant.is-thinking .assistant-launcher chat-mascot,
+    .voice-assistant.is-speaking .assistant-launcher chat-mascot {
+      animation: none;
+    }
   }
   .settings #assistant-header span {
     display: none;
@@ -337,8 +409,55 @@ body.contrast .assistant-message > span {
 }
 
 /* Keep the mascot legible as the single guide entry point. */
-.assistant-launcher chat-mascot { width: 140px; }
-.assistant-launcher span { font-size: .94rem; }
+.assistant-launcher chat-mascot {
+  width: 140px;
+}
+.assistant-launcher span {
+  font-size: 0.94rem;
+}
 @media (max-width: 650px) {
-  .assistant-launcher chat-mascot { width: 100px; }
+  .assistant-launcher chat-mascot {
+    width: 100px;
+  }
+}
+
+/* Apply feedback to the painted canvas alpha, never the transparent tile box. */
+.voice-assistant .assistant-launcher,
+.voice-assistant .assistant-launcher:hover,
+.voice-assistant .assistant-launcher:active,
+.voice-assistant .assistant-launcher:focus-visible {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  outline: none;
+  transform: none;
+  filter: none;
+}
+.voice-assistant .assistant-launcher chat-mascot {
+  filter: none;
+  animation: none;
+}
+.voice-assistant .assistant-launcher:hover chat-mascot::part(character),
+.voice-assistant
+  .assistant-launcher:focus-visible
+  chat-mascot::part(character) {
+  filter: drop-shadow(0 0 3px #ef8a62) drop-shadow(0 0 7px #ef8a6280);
+}
+.voice-assistant .assistant-launcher:focus-visible .assistant-launcher-status {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.voice-assistant.is-listening .assistant-launcher chat-mascot,
+.voice-assistant.is-thinking .assistant-launcher chat-mascot,
+.voice-assistant.is-speaking .assistant-launcher chat-mascot {
+  animation: none;
+}
+
+.assistant-shortcuts {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  color: #527590;
+  line-height: 1.4;
 }

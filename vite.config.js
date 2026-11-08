@@ -4,10 +4,22 @@ import { createAssistantMiddleware } from "./server/ai-assistant.js";
 import { resolve } from "node:path";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), [
-    "TINKER_",
-  ]);
+  const env = loadEnv(mode, process.cwd(), ["TINKER_"]);
   return {
+    worker: {
+      format: "es",
+    },
+    resolve: {
+      alias: [
+        {
+          find: /^onnxruntime-web$/,
+          replacement: resolve(
+            import.meta.dirname,
+            "node_modules/onnxruntime-web/dist/ort.wasm.min.mjs",
+          ),
+        },
+      ],
+    },
     plugins: [
       {
         name: "chartaloud-local-ai",

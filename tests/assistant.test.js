@@ -28,7 +28,10 @@ async function call(app, body) {
   req.method = "POST";
   const res = {
     statusCode: 200,
-    setHeader() {},
+    headers: {},
+    setHeader(name, value) {
+      this.headers[name] = value;
+    },
     end(value) {
       this.body = JSON.parse(value);
     },
@@ -114,8 +117,28 @@ test("mock Tinker assistant receives verified context and returns spoken text", 
     result.body.answer,
     "Seattle is the highest point at 95 inches.",
   );
+  assert.equal(request.max_tokens, 220);
+  assert.match(result.headers["Server-Timing"], /assistant;dur=\d+/);
+  assert.match(result.headers["Server-Timing"], /tinker;dur=\d+/);
+  assert.match(result.headers["X-Tinker-Elapsed-Ms"], /^\d+$/);
+  assert.match(result.headers["X-Assistant-Elapsed-Ms"], /^\d+$/);
   assert.match(request.messages.at(-1).content, /Seattle/);
   assert.match(request.messages[0].content, /untrusted data/);
+});
+
+test("assistant reports an upstream timeout clearly", async () => {
+  const unavailable = createAssistantMiddleware({
+    getTinkerApiKey: () => "test-key",
+    getTinkerModelPath: () => "tinker://test:train:0/sampler_weights/sample",
+    fetchImpl: async () => {
+      throw Object.assign(new Error("request timed out"), {
+        name: "AbortError",
+      });
+    },
+  });
+  const response = await call(unavailable, { message: "Explain the chart." });
+  assert.equal(response.statusCode, 504);
+  assert.match(response.body.error, /within 20 seconds/);
 });
 
 test("missing Tinker key is reported without contacting the API", async () => {
@@ -125,4 +148,23 @@ test("missing Tinker key is reported without contacting the API", async () => {
   const response = await call(unavailable, { message: "Hello", context: {} });
   assert.equal(response.statusCode, 503);
   assert.match(response.body.error, /TINKER_API_KEY/);
+});
+
+test("blocked network returns actionable diagnostics without leaking secrets", async () => {
+  const app = createAssistantMiddleware({
+    getTinkerApiKey: () => "private-test-key",
+    getTinkerModelPath: () => "tinker://test:train:0/sampler_weights/sample",
+    fetchImpl: async () => {
+      throw new TypeError("fetch failed", {
+        cause: new AggregateError([
+          Object.assign(new Error("private-test-key"), { code: "EACCES" }),
+        ]),
+      });
+    },
+  });
+  const result = await call(app, { message: "Explain the pattern." });
+  assert.equal(result.statusCode, 502);
+  assert.equal(result.body.code, "AI_NETWORK_BLOCKED");
+  assert.match(result.body.error, /network permissions/);
+  assert.doesNotMatch(JSON.stringify(result.body), /private-test-key/);
 });

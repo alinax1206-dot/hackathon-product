@@ -2,12 +2,28 @@ import { uploadRainfall } from "./upload-helper.js";
 import { test, expect } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/models/kokoro/onnx/model_quantized.onnx*", (route) =>
+    route.abort(),
+  );
   await page.addInitScript(() => {
     window.audioEvents = [];
+    window.recognitionEvents = [];
     const record = (event) => window.audioEvents.push(event);
     window.speechSynthesis.cancel = () => record("cancelSpeech");
     window.speechSynthesis.speak = (utterance) =>
       record({ speech: utterance.text, lang: utterance.lang });
+    window.SpeechRecognition = class {
+      start() {
+        recognitionEvents.push("start");
+      }
+      stop() {
+        recognitionEvents.push("stop");
+        this.onend?.();
+      }
+      abort() {
+        recognitionEvents.push("abort");
+      }
+    };
     window.AudioContext = class {
       currentTime = 0;
       destination = {};
@@ -47,7 +63,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("sample mapping, keyboard, point cues, English speech and edit cancellation", async ({
+test("sample mapping, four-key chart controls, English speech and edit cancellation", async ({
   page,
 }) => {
   await page.getByRole("button", { name: /Creator Mode/ }).click();
@@ -61,39 +77,55 @@ test("sample mapping, keyboard, point cues, English speech and edit cancellation
     .getByRole("button", { name: "Validate mapping and continue" })
     .click();
   await expect(page.locator(".studio-screen #explorer")).toBeVisible();
-  await page.locator("#explorer").focus();
-  await page.keyboard.press("r");
-  await page.keyboard.press("ArrowRight");
-  await page.locator("#explorer").focus();
-  await page.keyboard.press("r");
-  expect(
-    await page.evaluate(
-      () => audioEvents.filter((e) => e === "startNote").length,
-    ),
-  ).toBeGreaterThanOrEqual(2);
-  await page.keyboard.press("Escape");
-  const starts = await page.evaluate(
-    () => audioEvents.filter((e) => e === "startNote").length,
-  );
-  await page.waitForTimeout(900);
-  expect(
-    await page.evaluate(
-      () => audioEvents.filter((e) => e === "startNote").length,
-    ),
-  ).toBe(starts);
+  await expect(
+    page.getByRole("note", { name: "Keyboard shortcuts" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("note", { name: "Keyboard shortcuts" }),
+  ).toContainText("Space");
   await page.locator("#explorer").focus();
   await page.keyboard.press("Home");
+  await page.keyboard.press("r");
+  await expect(page.locator("#selected-label")).toHaveText("Seattle");
   await page.keyboard.press("ArrowRight");
   await expect(page.locator("#explorer")).toBeFocused();
   await expect(page.locator("#selected-label")).toHaveText("Portland");
   await page.keyboard.press("Enter");
+  await expect(page.locator(".assistant-launcher-status")).toContainText(
+    "Speaking with your browser",
+  );
   await page.locator("#explorer").focus();
   await page.keyboard.press("Enter");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        audioEvents.some(
+          (e) => typeof e === "object" && e.speech?.includes("Portland, 78.00"),
+        ),
+      ),
+    )
+    .toBe(true);
   expect(
     await page.evaluate(() =>
-      audioEvents.filter((e) => typeof e === "object").at(-1),
+      audioEvents
+        .filter((e) => typeof e === "object")
+        .findLast((e) => e.speech?.includes("Portland, 78.00")),
     ),
-  ).toMatchObject({ lang: "en-US" });
+  ).toMatchObject({ lang: "en-US", speech: "Portland, 78.00." });
+  await page.keyboard.press("Space");
+  await expect(page.locator("#assistant-mic")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.keyboard.press("Space");
+  await expect(page.locator("#assistant-mic")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(await page.evaluate(() => recognitionEvents)).toEqual([
+    "start",
+    "stop",
+  ]);
   await page.getByRole("button", { name: "02 Map" }).click();
   await page.getByLabel("Value to hear").selectOption("City");
   await page
@@ -115,7 +147,9 @@ test("XLSX sheet choice, duplicate validation, aggregation, invalid rows and exp
   await page
     .getByRole("button", { name: "Validate mapping and continue" })
     .click();
-  await expect(page.locator("#aggregation-error")).toContainText("repeated categories");
+  await expect(page.locator("#aggregation-error")).toContainText(
+    "repeated categories",
+  );
   await page.getByRole("button", { name: "01 Import" }).click();
   await page.getByRole("button", { name: "02 Map" }).click();
   await expect(page.getByLabel("Worksheet")).toHaveValue("Records");
@@ -184,7 +218,7 @@ test("CSV file input preserves uploaded labels and zero/negative points", async 
   ).toBeVisible();
 });
 
-test("native Web Audio creates and stops oscillators without runtime errors", async ({
+test("removed chart shortcuts do not trigger point notes", async ({
   browser,
   baseURL,
 }) => {
@@ -227,18 +261,10 @@ test("native Web Audio creates and stops oscillators without runtime errors", as
     .click();
   await page.locator("#explorer").focus();
   await page.keyboard.press("r");
-  await expect
-    .poll(() => page.evaluate(() => nativeContext.state))
-    .toBe("running");
-  await page.getByRole("button", { name: "Play as music" }).click();
-  await page.waitForTimeout(900);
   await page.keyboard.press("Escape");
+  await expect(page.locator("#selected-label")).toHaveText("Seattle");
   const result = await page.evaluate(() => nativeAudio);
-  expect(result.starts).toBeGreaterThanOrEqual(1);
-  expect(result.stops).toBeGreaterThanOrEqual(result.starts);
-  expect(
-    result.frequencies.every((n) => Number.isFinite(n) && n >= 220 && n <= 880),
-  ).toBe(true);
+  expect(result.starts).toBe(0);
   expect(errors).toEqual([]);
   await context.close();
 });
@@ -288,11 +314,13 @@ test("Mapping decimal places controls chart, extrema, selected point and speech"
   await expect(page.locator("#selected-value")).toContainText("1.235");
   await page.locator("#explorer").focus();
   await page.keyboard.press("Enter");
-  expect(
-    await page.evaluate(
-      () => audioEvents.filter((e) => typeof e === "object").at(-1).speech,
-    ),
-  ).toContain("A, 1.235");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => audioEvents.filter((e) => typeof e === "object").at(-1)?.speech,
+      ),
+    )
+    .toContain("A, 1.235");
   await page.getByRole("button", { name: "02 Map" }).click();
   await page.getByLabel("Decimal places").selectOption("0");
   await page
@@ -311,4 +339,45 @@ test("Mapping decimal places controls chart, extrema, selected point and speech"
   await expect(
     page.getByRole("button", { name: "A, 1 records", exact: true }),
   ).toBeVisible();
+});
+
+test("Space works from home without Tab and sends interim speech from the input", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    window.SpeechRecognition = class {
+      start() {
+        window.activeRecognition = this;
+      }
+      stop() {
+        /* Simulate an engine that never delivers onend. */
+      }
+      abort() {}
+    };
+  });
+  await page.keyboard.press("Space");
+  await expect(page.locator("#assistant-mic")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.evaluate(() => {
+    const result = [{ transcript: "Open Creator Mode" }];
+    result.isFinal = false;
+    window.activeRecognition.onresult({ resultIndex: 0, results: [result] });
+  });
+  await page.locator("#assistant-input").focus();
+  await page.keyboard.press("Space");
+  await expect(page.locator("#file")).toBeAttached();
+  await expect(page.locator("#assistant-mic")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await page.locator("#assistant-input").fill("hello");
+  await page.locator("#assistant-input").press("End");
+  await page.keyboard.press("Space");
+  await expect(page.locator("#assistant-input")).toHaveValue("hello ");
+  await expect(page.locator("#assistant-mic")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 });

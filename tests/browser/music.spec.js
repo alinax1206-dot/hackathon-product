@@ -30,12 +30,11 @@ test("creator music uses the AI-selected style", async ({
     "Playing your data as music",
     { timeout: 15000 },
   );
-  await page.keyboard.press("Escape");
   await page.getByText("Adjust music", { exact: true }).click();
   await expect(page.getByLabel("Music style")).toHaveValue("jazz");
 });
 
-test("single-series music plays recorded instruments and can be stopped", async ({
+test("single-series music plays recorded instruments", async ({
   page,
 }) => {
   await page.goto("/");
@@ -53,8 +52,6 @@ test("single-series music plays recorded instruments and can be stopped", async 
   await expect(
     page.getByRole("button", { name: "Stop", exact: true }),
   ).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await expect(page.locator("#player-status")).toContainText("Ready to play");
 });
 
 test("upload and music screens fit a narrow phone viewport", async ({

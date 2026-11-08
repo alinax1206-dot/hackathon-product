@@ -5,13 +5,13 @@ This branch is the integrated ChartAloud UI and Creator → Publish → Code →
 ## Voice package
 
 - `src/voiceAssistant.js` owns the floating guide, microphone capture, short English greetings, chat, and local voice commands. Recognition is set to `en-US`.
-- `src/playback.js` owns speech output and audio cancellation. It currently chooses an installed English browser voice; no bundled voice package is included. Replace or extend this single speech path when adding the team's chosen voice package, while preserving `onEnd`, cancellation, and the short greeting behavior.
+- `src/playback.js` owns speech output and audio cancellation. Chart values and assistant answers use the bundled Kokoro `af_heart` voice through `src/kokoroSpeech.js` and its Web Worker; short greetings use an installed English browser voice. Preserve `onEnd`, cancellation, and greeting behavior when changing this path.
 - `server/ai-assistant.js` sends questions and verified chart context to Tinker and requests English answers. `server/ai-sound-advisor.js` handles the music suggestion. Copy `.env.example` to `.env.local` for local credentials; `.env.local` is ignored by Git and must never be committed.
 - Browser autoplay rules can block speech on first page load. Keep a user initiated way to hear guidance. Check speech quality and screen reader behavior manually on target devices.
 
 ## Keyboard mapping
 
-- Chart interactions and global key handling are in `src/main.js` near the bottom. Current User Explore keys: Left/Right select a point; Home/End work when the chart is focused; Enter reads the selected value; Space starts voice input; Escape stops audio. Creator Preview uses Space for music when the chart is focused.
+- Chart interactions and key handling are in `src/main.js` near the bottom. Entering User Explore focuses the chart automatically; Space also starts/sends voice input anywhere in Explore unless focus is in an input or unrelated control. Tab remains native browser focus navigation, not a custom chart shortcut. Left/Right select the previous/next point, Enter reads its exact label, value and unit, and Space starts voice input; pressing Space again ends recording and sends the question. The same mapping applies to Creator Preview and User Explore. The guide launcher announces Ready, Listening, Thinking/Preparing, Speaking, or microphone/error states; state glow is a CSS drop-shadow on the transparent mascot artwork, not the rectangular launcher.
 - Avoid taking keys from text fields, buttons, links, dialogs, or a screen reader. Update the visible keyboard hint and `aria-describedby` instructions with any new mapping.
 - `tests/browser/flow.spec.js` covers point selection and speech; `tests/browser/materials.spec.js` covers User entry, archive, and greetings. Add browser checks for any new key behavior.
 
